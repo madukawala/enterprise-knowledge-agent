@@ -12,9 +12,10 @@ The project is built step by step, one feature branch at a time, following the p
 
 - the architecture and design;
 - the project scaffold: settings, structured logging, error handling, a minimal API, the test harness and CI;
-- the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana.
+- the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana;
+- the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection.
 
-The chat UI, the agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the checks.
+Search, the chat UI, the agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the checks.
 
 ## Contents
 
@@ -135,14 +136,14 @@ enterprise-knowledge-agent/
   api/            FastAPI app: routes, middleware, error handling, SSE streaming
   core/           Shared settings, structured logging and error types
   agents/         LangGraph graph, supervisor and specialist agents, shared state
-  rag/            Hybrid search, filters, re-ranking, citations
+  rag/            Search building blocks: chunk schema, BM25 encoder, embeddings, Pinecone index
   security/       Role matrix, authentication, guardrails, rate limiting
   ingestion/      Document parsing, chunking and indexing into Pinecone
   mcp_server/     MCP server with dummy enterprise data
   sandbox/        Python sandbox service
   ui/             Streamlit app and agent activity panel
   prompts/        Prompt templates, kept out of the code
-  data/           Sample Helix Bank documents
+  data/           Sample Helix Bank documents (data/sample_docs) and ingestion output (data/index, not committed)
   evals/          Evaluation datasets
   tests/          Unit, integration, graph, security, resilience and end-to-end tests
   docs/           Architecture diagrams, decision records, assumptions, threat model, testing
@@ -152,12 +153,12 @@ enterprise-knowledge-agent/
   compose.yaml    The full local stack; compose.dev.yaml adds live code reload
 ```
 
-Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `ui/` (empty package), `infra/` and `tests/` exist.
+Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `data/`, `ui/` (empty package), `infra/` and `tests/` exist. The `rag/`, `ingestion/` and `data/` folders each have a README explaining how they work.
 
 The code is one Python project with one `pyproject.toml` and one lock file, with two deliberate boundaries:
 
 - The sandbox has its own small dependency file (`sandbox/requirements.txt`), so its image contains only data-analysis libraries, with no project code and no secrets.
-- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). A second contract keeps `core/` at the bottom layer, so it never depends on the other packages.
+- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). Two more contracts keep `core/` at the bottom layer, and keep `ingestion/` (an offline job) out of the running services.
 
 ## Getting started
 
@@ -199,17 +200,18 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 
    This builds the API image, starts every service and waits until all of them are healthy. The first start downloads several images and takes a few minutes. `make ps` shows each service and its health, and <http://localhost:8000/readyz> should report `"status": "ready"`.
 
-4. Load the sample documents into Pinecone:
+4. Load the sample documents into Pinecone. This needs `PINECONE_API_KEY` in `.env` (a free Starter key is enough) and runs on your machine, not in Docker:
 
    ```bash
+   make ingest-check    # optional: check the documents first, no key needed
    make ingest
    ```
 
-   You can run this again at any time. It updates the same records and does not create duplicates.
+   The first run creates the `helix-knowledge` index (hybrid, `dotproduct`, 1024 dimensions). You can run it again at any time: it overwrites the same records, removes records of deleted documents, and never creates duplicates. See [ingestion/README.md](ingestion/README.md).
 
 5. Open the app at <http://localhost:8501> and log in with one of the test users below. Use a different user to try each role.
 
-Steps 4 and 5 work once the sample-data and UI branches are merged.
+Step 5 works once the UI branch is merged.
 
 ### Test users
 
@@ -280,6 +282,7 @@ Run `make` on its own to list every task. The main ones:
 | `make ps` / `make logs` | Service health and logs |
 | `make compose-check` | Check the Compose files without starting anything |
 | `make scan-image` | Scan the API image with Trivy |
+| `make ingest-check` / `make ingest` | Check the sample documents, or load them into Pinecone |
 
 The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API image.
 

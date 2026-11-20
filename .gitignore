@@ -60,6 +60,9 @@ locust-report*.html
 # Ingestion output (fitted BM25 parameters, document catalog);
 # rebuilt with `make ingest`
 data/index/
+# Temporary files left if a save is interrupted (ingestion writes to a
+# temporary file first, then renames it)
+*.tmp
 # Local Docker volume data, if bind-mounted
 .docker-data/
 # Logs

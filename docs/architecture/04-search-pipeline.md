@@ -4,18 +4,24 @@ How documents get into Pinecone (ingestion), and how a question turns into cited
 
 ## Ingestion
 
-`make ingest` is idempotent: chunk IDs are stable (`<doc_id>#<chunk_index>`), so running it again overwrites the same records instead of adding duplicates.
+`make ingest` is idempotent:
+- Chunk IDs are stable (`<doc_id>#<chunk_index>`), so running it again overwrites the same records instead of adding duplicates.
+- Records that no longer match a document (deleted, or now shorter) are removed, so the index always matches the folder.
+- The BM25 parameters and the catalog are saved only after Pinecone is up to date.
+
+`make ingest-check` runs the same checks and chunking without calling Pinecone. The code is in [ingestion/](../../ingestion/README.md) and [rag/](../../rag/README.md).
 
 ```mermaid
 flowchart LR
     A["Markdown documents<br/>data/sample_docs/"] --> B["Parse front matter<br/>doc_id, title, department,<br/>document_type, access_level,<br/>created_date"]
     B --> C["Chunk<br/>by headings, then ~450 tokens<br/>(under the e5 512-token limit),<br/>small overlap"]
     C --> D["Dense vectors<br/>multilingual-e5-large<br/>Pinecone Inference, input_type=passage"]
-    C --> E["Sparse vectors<br/>BM25Encoder fitted on the corpus<br/>parameters saved for queries"]
+    C --> E["Sparse vectors<br/>BM25 fitted on the corpus (rag/bm25.py)<br/>parameters saved for queries"]
     D --> F["Upsert with stable IDs<br/>doc_id#chunk_index"]
     E --> F
-    B --> G["Document catalog<br/>doc counts and metadata values<br/>per collection (used by RLM step 1)"]
+    B --> G["Document catalog<br/>doc counts and metadata values<br/>per collection and access level<br/>(used by RLM step 1)"]
     F --> H[("Pinecone hybrid index<br/>dotproduct<br/>namespace = collection")]
+    H --> X["Delete stale records<br/>IDs not written in this run"]
 ```
 
 ## Query
@@ -57,7 +63,7 @@ That is the weighted combination of the dense score and the BM25 score that the 
 |---|---|---|
 | `doc_id` | `INC-2026-014` | citations, de-duplication, stable chunk IDs |
 | `title` | `Card authorisation timeouts` | citations |
-| `section` | `Root cause` | citations point to a real section |
+| `section` | `Root cause`, `Discussion > Card payments` | citations point to a real section |
 | `department` | `payments` | filters |
 | `document_type` | `incident` | filters (RLM step 4) |
 | `access_level` | `public` · `internal` · `confidential` · `restricted` | permission filter from the user's role |
@@ -65,3 +71,5 @@ That is the weighted combination of the dense score and the BM25 score that the 
 | `source_path` | `data/sample_docs/incidents/INC-2026-014.md` | link from the UI |
 | `chunk_index` | `3` | ordering, stable IDs |
 | `text` | chunk text | prompt context and quote check |
+| `severity` | `SEV1` (incidents only) | filters |
+| `tags` | `["payhub", "connection-pool"]` (optional) | filters |

@@ -16,11 +16,14 @@ Where the assignment leaves something open, this file records the choice made an
 
 | # | Assumption | Reason |
 |---|---|---|
-| D1 | The corpus is 60–80 generated Markdown documents across six collections: policies, architecture documents, runbooks, incident reports, product specifications and meeting notes. | Matches the business scenario; small enough to index on the free Pinecone plan. |
+| D1 | The corpus is 70 Markdown documents written for the demo across six collections: policies, architecture documents, runbooks, incident reports, product specifications and meeting notes (about 560 chunks). See [data/README.md](../data/README.md). | Matches the business scenario; small enough to index on the free Pinecone plan. |
 | D2 | Each document has front matter: `doc_id`, `title`, `department`, `document_type`, `access_level`, `created_date`. | Metadata filters and citations need it. Real document stores would supply it through connectors. |
-| D3 | About 15–20 incident reports describe payment failures over the last 12 months, with a few repeated root causes. | So the assignment's RLM example ("summarize payment-failure outages over the last year") has a real, checkable answer. |
+| D3 | 16 incident reports describe payment failures in the 12 months to 20 November 2026, with five repeated root causes; two older ones fall outside that window. | So the assignment's RLM example ("summarize payment-failure outages over the last year") has a real, checkable answer, and a date filter visibly changes it. |
 | D4 | Documents change rarely; re-indexing is a manual Admin action (`make ingest` or the admin tool). | No live document feed in scope. A real system would re-index on change events. |
 | D5 | The MCP server serves dummy data (employee directory, service catalog, incident records) from JSON files. | The assignment allows a dummy-data MCP server. |
+| D6 | Ingestion runs on the developer's machine (`make ingest`), not as a Docker service. Its output (`data/index/`) is not committed and is rebuilt from the documents. | It needs the Pinecone key only once, and the API container stays read-only. |
+| D7 | Chunk sizes use an estimated token count, not the embedding model's tokenizer. | Avoids installing the tokenizer; the estimate errs on the high side and the embedding call truncates as a safety net ([ADR-0004](adr/0004-embeddings-and-bm25.md)). |
+| D8 | BM25 uses no stemming and a short English stop-word list. | Keeps codes such as `INC-2026-003` intact; the dense vector covers word forms. |
 
 ## Identity and access
 

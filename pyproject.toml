@@ -20,6 +20,12 @@ dependencies = [
     "redis>=5.2",
     # Request metrics on /metrics, scraped by Prometheus
     "prometheus-fastapi-instrumentator>=7.0",
+    # Vector database client. Also calls Pinecone's hosted embedding model,
+    # so no embedding model runs on this machine (ADR-0004).
+    "pinecone>=10.3",
+    # Reads the front matter (title, department, access level...) of the
+    # sample documents during ingestion
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]
@@ -41,6 +47,8 @@ dev = [
     # Security checks
     "bandit[toml]>=1.8",
     "pip-audit>=2.7",
+    # Type hints for PyYAML, used by mypy
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]
@@ -51,7 +59,7 @@ build-backend = "hatchling.build"
 # The sandbox is not listed here on purpose: it has its own small
 # requirements file and is built into its own image.
 [tool.hatch.build.targets.wheel]
-packages = ["api", "core", "security", "ui"]
+packages = ["api", "core", "security", "rag", "ingestion", "ui"]
 
 # ---------------------------------------------------------------
 # Ruff: linting and formatting
@@ -89,7 +97,7 @@ select = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["api", "core", "security", "ui"]
+files = ["api", "core", "security", "rag", "ingestion", "ui"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -101,19 +109,25 @@ warn_required_dynamic_aliases = true
 # Import boundaries (checked in CI with `lint-imports`)
 # ---------------------------------------------------------------
 [tool.importlinter]
-root_packages = ["api", "core", "security", "ui"]
+root_packages = ["api", "core", "security", "rag", "ingestion", "ui"]
 
 [[tool.importlinter.contracts]]
 name = "The UI talks to the API over HTTP only and never imports backend code"
 type = "forbidden"
 source_modules = ["ui"]
-forbidden_modules = ["api", "core", "security"]
+forbidden_modules = ["api", "core", "security", "rag", "ingestion"]
 
 [[tool.importlinter.contracts]]
 name = "Core is the bottom layer and does not depend on other packages"
 type = "forbidden"
 source_modules = ["core"]
-forbidden_modules = ["api", "security", "ui"]
+forbidden_modules = ["api", "security", "rag", "ingestion", "ui"]
+
+[[tool.importlinter.contracts]]
+name = "Ingestion is an offline job: the running services never import it"
+type = "forbidden"
+source_modules = ["api", "rag", "security"]
+forbidden_modules = ["ingestion"]
 
 # ---------------------------------------------------------------
 # pytest and coverage
@@ -141,7 +155,7 @@ markers = [
 [tool.coverage.run]
 branch = true
 # Extended with each core package as it is added (agents, rag, ...).
-source = ["api", "core", "security"]
+source = ["api", "core", "security", "rag", "ingestion"]
 
 [tool.coverage.report]
 fail_under = 80

@@ -32,13 +32,16 @@ tests/
   helpers/
     llm.py               # fake chat model that returns scripted replies
     tokens.py            # Keycloak-style JWTs signed with a test key, plus the matching JWKS
+    pinecone.py          # in-memory Pinecone: fake embeddings, index and store
   unit/
   integration/
   security/
   graph/                 # added with feature/langgraph-agents
   resilience/            # added with feature/resilience
   e2e/                   # added with feature/observability-evals
-  fixtures/              # small dummy documents (incl. a poisoned one), MCP data; added with ingestion
+  live/                  # opt-in tests against real cloud services (`make test-live`)
+  fixtures/
+    sample_docs/         # three tiny documents for the ingestion tests (a poisoned one comes with guardrails)
 evals/
   datasets/              # golden questions with expected sources; added with feature/observability-evals
 ```
@@ -109,7 +112,7 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 |---|---|
 | `feature/project-scaffold` | Test harness, markers, fixtures, CI and coverage gate |
 | `feature/docker-infra` | Readiness logic (ready, degraded, not ready, timeouts) with fake checks; probe failures against closed ports; `/readyz` returns 503 without leaking connection details; `/metrics` counts requests but not health probes; Compose check, healthy start order and Trivy |
-| `feature/sample-data-ingestion` | Front-matter parsing, chunking, stable IDs, idempotent re-runs |
+| `feature/sample-data-ingestion` | Front-matter checks (every rule, all problems reported at once); section-aware chunking with property tests (no words lost, chunks under the token limit); BM25 maths and save/load; stable IDs; re-running changes nothing; stale records removed; nothing saved when Pinecone fails; YAML code tags, symlinks and missing access levels refused; the API key never printed; the demo corpus keeps its promised shape (`test_sample_corpus.py`); one live embedding call |
 | `feature/hybrid-retrieval` | Score weighting, metadata and permission filters, Pinecone Local, first hit rate and MRR |
 | `feature/langgraph-agents` | Routing and failure containment with fake LLMs |
 | `feature/streaming-api` | SSE event order, client disconnect and cancellation |
