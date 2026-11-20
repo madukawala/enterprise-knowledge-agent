@@ -1,14 +1,19 @@
 # syntax=docker/dockerfile:1
 #
-# Image for the API. The UI and MCP server get their own targets in this file
-# when they are built; the Python sandbox has a separate Dockerfile because it
-# must not contain any project code (see ADR-0009).
+# Images for the API and the chat UI. The MCP server gets its own target in
+# this file when it is built; the Python sandbox has a separate Dockerfile
+# because it must not contain any project code (see ADR-0009).
 #
-# Two stages:
-#   builder  installs the locked dependencies and the project into /opt/venv
-#   api      copies only /opt/venv into a clean image and runs as a non-root user
+# Stages:
+#   builder     installs the locked dependencies and the project into /opt/venv
+#   ui-builder  installs only the UI's libraries (Streamlit, httpx) into /opt/venv
+#   runtime     a clean Python image with security fixes and a non-root user
+#   api         runtime + the API's /opt/venv
+#   ui          runtime + the UI's /opt/venv and the ui/ folder. No backend
+#               code and no backend libraries, so the UI image cannot import
+#               them even by mistake (ADR-0014).
 #
-# Build: docker compose build api   (or: docker build --target api -t eka-api .)
+# Build: docker compose build api ui   (or: docker build --target api -t eka-api .)
 
 ARG PYTHON_IMAGE=python:3.12.16-slim-trixie
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.24
@@ -54,13 +59,30 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
 # ---------------------------------------------------------------
-# api
+# ui-builder
 # ---------------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS api
+FROM ${PYTHON_IMAGE} AS ui-builder
 
-LABEL org.opencontainers.image.title="enterprise-knowledge-agent-api" \
-      org.opencontainers.image.source="https://github.com/madukawala/enterprise-knowledge-agent" \
-      org.opencontainers.image.licenses="MIT"
+COPY --from=uv /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+
+WORKDIR /src
+
+# Only the "ui" dependency group from uv.lock: the same pinned versions as
+# everywhere else, without FastAPI, LangGraph, Pinecone and the rest.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --locked --no-install-project --only-group ui
+
+# ---------------------------------------------------------------
+# runtime: shared by the api and ui images
+# ---------------------------------------------------------------
+FROM ${PYTHON_IMAGE} AS runtime
 
 # Install Debian security fixes released after the base image was built
 # (the Trivy scan in CI fails on fixable high and critical issues), then
@@ -71,12 +93,22 @@ RUN apt-get update \
  && groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
 
-COPY --from=builder /opt/venv /opt/venv
-
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    APP_ENV=production \
+    PYTHONUNBUFFERED=1
+
+# ---------------------------------------------------------------
+# api
+# ---------------------------------------------------------------
+FROM runtime AS api
+
+LABEL org.opencontainers.image.title="enterprise-knowledge-agent-api" \
+      org.opencontainers.image.source="https://github.com/madukawala/enterprise-knowledge-agent" \
+      org.opencontainers.image.licenses="MIT"
+
+COPY --from=builder /opt/venv /opt/venv
+
+ENV APP_ENV=production \
     LOG_FORMAT=json \
     API_HOST=0.0.0.0 \
     API_PORT=8000
@@ -92,3 +124,37 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"]
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]
+
+# ---------------------------------------------------------------
+# ui
+# ---------------------------------------------------------------
+FROM runtime AS ui
+
+LABEL org.opencontainers.image.title="enterprise-knowledge-agent-ui" \
+      org.opencontainers.image.source="https://github.com/madukawala/enterprise-knowledge-agent" \
+      org.opencontainers.image.licenses="MIT"
+
+COPY --from=ui-builder /opt/venv /opt/venv
+# The app and its Streamlit settings. Owned by root, so the app cannot
+# change its own code.
+COPY ui /app/ui
+COPY .streamlit/config.toml /app/.streamlit/config.toml
+
+# PYTHONPATH lets `import ui...` work without installing the project.
+# HOME points at /tmp, the only place Streamlit may write in a read-only
+# container. API_URL is the API's address on the Docker network.
+ENV PYTHONPATH=/app \
+    HOME=/tmp \
+    API_URL=http://api:8000 \
+    STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
+    STREAMLIT_SERVER_PORT=8501
+
+USER 10001:10001
+WORKDIR /app
+EXPOSE 8501
+
+# Streamlit's own health endpoint.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4)"]
+
+CMD ["streamlit", "run", "ui/app.py"]

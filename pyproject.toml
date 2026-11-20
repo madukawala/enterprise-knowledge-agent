@@ -58,6 +58,16 @@ dev = [
     # Type hints for PyYAML, used by mypy
     "types-pyyaml>=6.0",
 ]
+# The chat UI's own libraries. The UI image installs only this group
+# (see the Dockerfile), so it carries no backend libraries at all.
+ui = [
+    "httpx>=0.27",
+    "streamlit>=1.67.0",
+]
+
+[tool.uv]
+# `uv sync` and `uv run` install the test tools and the UI libraries too.
+default-groups = ["dev", "ui"]
 
 [build-system]
 requires = ["hatchling>=1.25"]
@@ -174,8 +184,9 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-# Extended with each core package as it is added (agents, rag, ...).
-source = ["api", "core", "security", "rag", "ingestion", "agents", "evals"]
+# Every application package. The Streamlit page (ui/app.py) is covered
+# by tests that run it headless with Streamlit's AppTest.
+source = ["api", "core", "security", "rag", "ingestion", "agents", "evals", "ui"]
 
 [tool.coverage.report]
 fail_under = 80

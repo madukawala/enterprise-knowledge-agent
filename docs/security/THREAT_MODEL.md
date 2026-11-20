@@ -116,6 +116,17 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | An error during the stream shows internals | After the stream starts, failures become an `error` event with a fixed message; the traceback is logged with the request ID | `tests/resilience/test_chat_stream.py` |
 | Two questions in one conversation at once mix up its history | One run per thread; a second question gets 409 | `tests/integration/test_chat_api.py` |
 
+## Chat UI (Streamlit)
+
+| Threat | Control | Proven by |
+|---|---|---|
+| A poisoned document makes the model write HTML or script into the answer, which then runs in the user's browser | Answers are drawn with Streamlit's Markdown, which never renders raw HTML here; no `unsafe_allow_html` and no `st.html` anywhere in the UI | `tests/security/test_ui_security.py` |
+| The UI is used to get around the API's rules | The UI holds no keys and calls only the API, which enforces roles, thread owners and limits. The role only travels in the development header, never in the body | `tests/security/test_ui_security.py`, `tests/integration/test_ui_client.py` |
+| A compromised UI container reaches the backend's data or code | The UI image has only Streamlit, httpx and the `ui/` folder: no backend code, libraries or secrets. It runs read-only as a non-root user with every capability dropped, on the frontend network only | Image contents in `tests/security/test_ui_security.py`; checked by hand in Docker |
+| Another site drives the UI from the user's browser (cross-site requests, WebSocket from another origin) | Streamlit's XSRF protection and same-origin WebSocket checks are on, written into `.streamlit/config.toml` so they are not switched off by accident | `tests/security/test_ui_security.py` |
+| Errors show internals in the browser | API errors arrive with the API's safe message and a request ID; connection failures get fixed messages without addresses or exception text; Streamlit shows only the error type for an unexpected failure, and no "search this error" links | `tests/integration/test_ui_client.py`, `tests/security/test_ui_security.py` |
+| The UI sends data to third parties | Streamlit's usage statistics are off, and the public-IP lookup on start is disabled | `tests/security/test_ui_security.py` |
+
 ## Python sandbox
 
 | Threat | Control | Test |
@@ -139,4 +150,6 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 - The model writes the answer from retrieved text that is not yet cleaned or scanned for hidden instructions (`feature/guardrails`). The role filter limits what such text could reveal to what the user may already read.
 - Until `feature/auth-rbac`, a local API trusts the `X-Dev-Role` header, so anyone who can reach port 8000 on the machine can ask as an admin. The port is published on `127.0.0.1` only, and a production API refuses the header. Thread owners are roles for now, so two local users with the same role could continue each other's conversations if they shared a thread ID.
 - Conversations and their owners are kept in memory with no size limit until `feature/memory` moves them to Postgres. A long-running local API grows slowly with every new thread; restarting it clears them.
+- Until `feature/auth-rbac`, anyone who can open the UI on the machine can pick any role in the sidebar. The UI is published on `127.0.0.1` only, and the role picker stops working against a production API, which refuses the header.
+- A model's answer can contain Markdown links. They are shown as links, so an answer written from a poisoned document could point to an outside site. The documents are fictional and trusted for now; `feature/guardrails` adds checks on retrieved text and answers.
 - Keycloak runs in development mode (`start-dev`, plain HTTP) and the demo users have fixed passwords. This is acceptable on localhost only.

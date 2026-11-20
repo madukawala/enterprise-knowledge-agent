@@ -5,14 +5,17 @@
 .PHONY: help install lint format typecheck imports test test-unit test-security test-live \
         audit check run-api clean env-file up up-dev up-observability down down-volumes \
         ps logs compose-check scan-image ingest ingest-check search eval-retrieval \
-        test-pinecone-local ask chat diagrams stream
+        test-pinecone-local ask chat diagrams stream run-ui
 
 UV_RUN := uv run
+# The API that `make stream` and `make run-ui` talk to.
+API_URL ?= http://localhost:8000
 # Exported from uv.lock for pip-audit. Kept in .cache/, which git ignores.
 AUDIT_REQUIREMENTS := .cache/requirements-audit.txt
 
 COMPOSE := docker compose
 API_IMAGE := enterprise-knowledge-agent/api:local
+UI_IMAGE := enterprise-knowledge-agent/ui:local
 # Trivy runs from its official image, so nothing extra is installed locally.
 TRIVY_IMAGE := aquasec/trivy:0.76.2
 # Every optional Compose profile, so `make down`, `ps` and `logs` see all services.
@@ -82,11 +85,13 @@ audit: ## Security lint (bandit) and known vulnerabilities in dependencies (pip-
 
 check: lint typecheck imports test audit ## Everything CI runs, except gitleaks and Trivy
 
-scan-image: ## Scan the API image for known vulnerabilities (Trivy, same rules as CI)
-	$(COMPOSE) build api
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-		-v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
-		--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(API_IMAGE)
+scan-image: ## Scan the API and UI images for known vulnerabilities (Trivy, same rules as CI)
+	$(COMPOSE) build api ui
+	@for image in $(API_IMAGE) $(UI_IMAGE); do \
+		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+			-v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
+			--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $$image || exit 1; \
+	done
 
 # ---------------------------------------------------------------
 # Documents: load the sample documents into Pinecone
@@ -132,17 +137,23 @@ diagrams: ## Draw the agent graph from the code into docs/architecture/03-agent-
 	$(UV_RUN) python -m agents.diagram
 
 # ---------------------------------------------------------------
-# Running: the API on its own
+# Running: the API and the UI without Docker
 # ---------------------------------------------------------------
 
 run-api: ## Start only the API on http://localhost:8000 with auto-reload (no Docker)
 	$(UV_RUN) uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 
+# Needs the API running (make run-api in another terminal, or make up).
+# API_URL picks a different API, e.g. make run-ui API_URL=http://localhost:9000
+run-ui: export API_URL := $(API_URL)
+run-ui: ## Start the chat UI on http://localhost:8501; reloads when ui/ changes (no Docker)
+	$(UV_RUN) streamlit run ui/app.py --server.address 127.0.0.1 --server.port 8501 \
+		--server.runOnSave true
+
 # Example: make stream Q="Why did card payments fail in March?" ROLE=analyst
 # Needs the API running (make run-api or make up). Prints the raw server-sent
 # events, as the UI receives them. The question is turned into JSON by
 # Python, so quotes in it cannot break the request.
-API_URL ?= http://localhost:8000
 stream: export Q := $(Q)
 stream: export ROLE := $(ROLE)
 stream: ## Watch an answer stream from the running API: make stream Q="your question" ROLE=analyst

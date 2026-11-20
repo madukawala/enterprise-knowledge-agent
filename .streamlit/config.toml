@@ -1,0 +1,32 @@
+# Streamlit settings for the chat UI (ui/app.py).
+# Read from the folder Streamlit is started in: the repository root for
+# `make run-ui`, and /app inside the UI image.
+
+[client]
+# Errors in the browser show a generic message and the error type only.
+# The full message and traceback go to the UI's own log.
+showErrorDetails = "type"
+# Hide the developer menu (rerun, settings, deploy).
+toolbarMode = "minimal"
+# No "search this error on Google / ChatGPT" links, which would put error
+# text into a third-party URL.
+showErrorLinks = false
+
+[server]
+# No browser tab is opened on start; the URL is printed instead.
+headless = true
+# Kept on (these are the defaults, written here so nobody turns them off by
+# accident): cross-site request forgery protection, and only same-origin
+# connections to the app's WebSocket.
+enableXsrfProtection = true
+enableCORS = true
+# The app has no file uploads.
+maxUploadSize = 1
+
+[browser]
+# The address people open. Setting it also stops Streamlit from asking an
+# outside service (checkip.amazonaws.com) for this machine's public IP
+# when it starts.
+serverAddress = "localhost"
+# Nothing is sent to Streamlit's usage statistics.
+gatherUsageStats = false

@@ -109,3 +109,11 @@ trivy-results.*
 *.har
 http-client.private.env.json
 *.private.env.json
+
+# ---------------------------------------------------------------
+# Streamlit (chat UI)
+# ---------------------------------------------------------------
+# .streamlit/config.toml is shared on purpose. Secrets and personal
+# credentials files are never committed.
+.streamlit/secrets.toml
+.streamlit/credentials.toml

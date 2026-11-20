@@ -1,9 +1,9 @@
 # The full local stack. Start it with `make up` (or `docker compose up -d --build --wait`).
 #
-# Services in this file today: api, postgres, redis, keycloak, and the
+# Services in this file today: ui, api, postgres, redis, keycloak, and the
 # optional prometheus + grafana (profile "observability") and the Pinecone
-# emulator used by tests (profile "pinecone-local"). The UI, MCP server
-# and Python sandbox are added by their own feature branches.
+# emulator used by tests (profile "pinecone-local"). The MCP server and the
+# Python sandbox are added by their own feature branches.
 #
 # Layout (ADR-0009):
 #   frontend network  - the services you open in a browser. Ports are published
@@ -28,6 +28,38 @@ services:
   # ---------------------------------------------------------------
   # Application
   # ---------------------------------------------------------------
+  # The chat window and the agent activity panel (Streamlit). It talks to
+  # the API over the frontend network and holds no secrets of its own.
+  ui:
+    <<: *hardening
+    build:
+      context: .
+      target: ui
+    image: enterprise-knowledge-agent/ui:local
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "127.0.0.1:${UI_PORT:-8501}:8501"
+    networks: [frontend]
+    depends_on:
+      api:
+        condition: service_healthy
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   api:
     <<: *hardening
     build:
@@ -40,6 +72,23 @@ services:
       LOG_FORMAT: json
       POSTGRES_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+      # Language models, document search and tracing. Each may be left
+      # empty: without a model key /chat answers 503, and without Pinecone
+      # the agents answer that document search is unavailable.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-}
+      PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME:-helix-knowledge}
+      # The BM25 parameters saved by `make ingest`, mounted read-only below.
+      INDEX_ARTIFACTS_DIR: /srv/index
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-helix-knowledge-agent}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+    volumes:
+      - ./data/index:/srv/index:ro
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     networks: [frontend, backend]

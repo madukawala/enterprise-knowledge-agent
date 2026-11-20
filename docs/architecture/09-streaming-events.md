@@ -1,8 +1,8 @@
 # 9. Streaming to the agent activity panel
 
-`POST /chat` returns a stream of server-sent events (SSE). The Streamlit UI shows the answer's `token` events in the chat window and every other event in the agent activity panel. Why SSE was chosen is in [ADR-0013](../adr/0013-streaming-with-server-sent-events.md).
+`POST /chat` returns a stream of server-sent events (SSE). The Streamlit UI shows the answer's `token` events in the chat window and every other event in the agent activity panel. Why SSE was chosen is in [ADR-0013](../adr/0013-streaming-with-server-sent-events.md); how the UI reads it is in [ADR-0014](../adr/0014-streamlit-chat-ui.md).
 
-The code: [api/routes/chat.py](../../api/routes/chat.py) (the endpoint), [api/sse.py](../../api/sse.py) (the stream), [agents/streaming.py](../../agents/streaming.py) (graph steps to events) and [agents/events.py](../../agents/events.py) (the event types).
+The code: [api/routes/chat.py](../../api/routes/chat.py) (the endpoint), [api/sse.py](../../api/sse.py) (the stream), [agents/streaming.py](../../agents/streaming.py) (graph steps to events) and [agents/events.py](../../agents/events.py) (the event types). On the client side: [ui/client.py](../../ui/client.py) (reads the stream), [ui/conversation.py](../../ui/conversation.py) (applies the rules below) and [ui/views.py](../../ui/views.py) (draws the panel).
 
 ```mermaid
 sequenceDiagram
@@ -12,6 +12,7 @@ sequenceDiagram
     participant G as LangGraph run
     participant T as Models and search
 
+    Note over U: Streamlit server, httpx (the browser never calls the API)
     U->>A: POST /chat {message, thread_id?} (X-Dev-Role until login is added)
     A->>A: check the body, the thread's owner, one question per thread
     alt bad request, someone else's thread, or thread busy
@@ -37,7 +38,7 @@ sequenceDiagram
     Q-->>U: node_start, validation (output), node_end
     Q-->>U: response_end (final text, citations, steps, limits, models, tokens)
     Note over A,U: Nothing sent for CHAT_KEEPALIVE_SECONDS: a ": keep-alive" comment line.
-    Note over U,G: Client disconnects: the run task is cancelled, which stops the model or search call in progress.
+    Note over U,G: Client disconnects (Stop in the UI, tab closed): the run task is cancelled, which stops the model or search call in progress.
 ```
 
 ## The events
@@ -68,6 +69,8 @@ Coming with later branches, in the same format: `tool_call` / `tool_result` (`fe
 
 The response agent's tokens are held back while the reply could still be the model's `NOT_FOUND` signal, so the user never sees that word flash up before the friendly "I couldn't find this" message.
 
+The UI follows these rules in `Turn.apply()` ([ui/conversation.py](../../ui/conversation.py)), and keeps event types it does not know yet in an "Other events" list instead of failing. Its tests replay streams recorded from the real API, so a change here that the UI does not handle fails its tests.
+
 ## What the stream never contains
 
 - The text of retrieved chunks. The panel gets counts, collections and filters. Sources appear only as citations of the final answer.
@@ -96,5 +99,8 @@ The agent metrics (`agent_node_duration_seconds`, `llm_calls_total`, ...) and th
 
 ```bash
 make run-api                       # in one terminal
+make run-ui                        # in another; open http://localhost:8501
 make stream Q="The PayHub database connection pool is exhausted. What should I do?" ROLE=analyst
 ```
+
+`make stream` prints the raw events, which is the quickest way to see exactly what the panel receives.
