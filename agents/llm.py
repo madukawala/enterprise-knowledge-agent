@@ -217,5 +217,7 @@ def _chat_model(name: str, key: SecretStr, model: str, settings: Settings) -> Ba
             temperature=settings.llm_temperature,
             request_timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
+            # Token counts are only sent with streamed replies when asked for.
+            stream_usage=True,
         )
     raise LLMSetupError(f"Unknown language model provider: {name}")

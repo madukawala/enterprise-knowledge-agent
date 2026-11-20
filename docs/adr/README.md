@@ -25,10 +25,11 @@ Together with [ASSUMPTIONS.md](../ASSUMPTIONS.md), these records explain the ass
 | [0010](0010-reranking.md) | Pinecone-hosted `bge-reranker-v2-m3`, skipped if it fails | Accepted |
 | [0011](0011-rlm-python-search-plans-in-sandbox.md) | Research search plans written in restricted Python and run in the sandbox | Accepted |
 | [0012](0012-architecture-diagrams.md) | draw.io for architecture pictures, Mermaid for flows, agent graph generated from code | Accepted |
+| [0013](0013-streaming-with-server-sent-events.md) | Answers and agent activity streamed with server-sent events, built from LangGraph's stream modes | Accepted |
 
 ## Adding a record
 
-1. Copy [template.md](template.md) to a new file with the next number, for example `0013-short-title.md`.
+1. Copy [template.md](template.md) to a new file with the next number, for example `0014-short-title.md`.
 2. Fill in each section in plain language.
 3. Add a row to the table above.
 

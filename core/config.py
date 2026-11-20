@@ -136,6 +136,15 @@ class Settings(BaseSettings):
     # for follow-up questions; small enough to keep prompts and quota low.
     agent_history_messages: int = Field(default=6, ge=0, le=20)
 
+    # --- Chat stream (POST /chat) ---
+    # Time limit for one whole answer. A normal question takes 10 to 40
+    # seconds on the free tiers; a run still going after this is stopped
+    # and the client gets an `error` event.
+    chat_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
+    # A comment line is sent when nothing else was sent for this long, so
+    # proxies keep the connection open and a closed browser tab is noticed.
+    chat_keepalive_seconds: float = Field(default=15.0, gt=0, le=60)
+
     # --- LangSmith tracing ---
     # Off unless switched on and a key is set. The app works the same
     # without it; it just sends no traces.

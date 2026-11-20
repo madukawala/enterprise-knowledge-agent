@@ -29,7 +29,9 @@ This is the graph built today. [docs/architecture/03-agent-graph.generated.md](.
 | [nodes/base.py](nodes/base.py) | What every node shares: dependencies, timing and failure containment |
 | [llm.py](llm.py) | The model gateway: Gemini first, then OpenRouter if Gemini fails, with a time limit on every call |
 | [context.py](context.py) and [prompts/](prompts/) | The prompts. Rules go in the system message; documents and the conversation go in tagged blocks |
-| [service.py](service.py) | `AgentService.ask()`: runs one question and returns the answer and what happened |
+| [service.py](service.py) | `AgentService.stream()`: runs one question and yields its events as they happen; `ask()` runs it to the end and returns the answer and what happened |
+| [events.py](events.py) | The live events of a run (node started, search done, token, final answer, ...), as the activity panel gets them |
+| [streaming.py](streaming.py) | Turns LangGraph's raw stream (`tasks`, `messages`, `values`) into those events |
 | [checkpoint.py](checkpoint.py) | Keeps each conversation between questions; reads back only known types |
 | [tracing.py](tracing.py) | LangSmith tracing, off unless a key is set |
 | [telemetry.py](telemetry.py) | Prometheus metrics for runs, nodes and model calls |
@@ -132,6 +134,24 @@ The prompts are Markdown files in [prompts/](prompts/), so they can be read with
 
 This separation is the first layer against prompt injection. What actually keeps data safe is in code: the role check in search and the citation check in the validator. Cleaning and scanning of retrieved text come with `feature/guardrails`.
 
+## Streaming
+
+`stream()` yields typed events while the graph runs; `ask()` is built on it, so the CLI and the API run the same code.
+
+```python
+async with aclosing(agents.stream("Why did card payments fail?", role=Role.ANALYST)) as events:
+    async for event in events:
+        print(event.type, event)  # agent_state, node_start, retrieval, token, ..., response_end
+```
+
+The events come from LangGraph's own stream modes, not from code inside the nodes, so the nodes know nothing about streaming:
+
+- `tasks` says when each node starts and finishes, and gives its state update. [streaming.py](streaming.py) reads the update to report the plan, the search, the checks and anything degraded.
+- `messages` gives the model's tokens, labelled with the node. Only the response agent's tokens are passed on. A new model-call ID in the middle of an answer means one model failed and the next started, so a `response_start` with reason `model_switch` tells the client to start the text again.
+- `values` gives the final state, for `response_end`.
+
+The first tokens are held back while the reply could still be the model's `NOT_FOUND` signal, so it never flashes up before the friendly message. Closing the iterator early cancels the run, including the model call in progress. The event list and the client rules are in [09-streaming-events](../docs/architecture/09-streaming-events.md); the HTTP side is in [api/](../api/README.md).
+
 ## Conversations
 
 The graph is compiled with a checkpointer, so a second question in the same `thread_id` starts from the saved conversation, and follow-up questions work. For now the checkpointer is in memory and lasts as long as the process. `feature/memory` replaces it with the Postgres checkpointer and adds summaries and long-term memory.
@@ -141,8 +161,8 @@ Saved checkpoints are read back with an explicit list of allowed types ([checkpo
 ## Observability
 
 - **Logs.** `supervisor_planned`, `llm_call_failed` (provider, outcome and error type only, because provider messages can echo the prompt), `llm_fallback_used`, `answer_rejected`, `agent_node_failed` (with the traceback) and one `agent_run_finished` per question. The question text is never logged.
-- **Metrics** ([telemetry.py](telemetry.py)), on a registry the caller passes in: `agent_runs_total{answer_kind}`, `agent_run_duration_seconds`, `agent_node_duration_seconds{node}`, `agent_node_errors_total{node,kind}`, `agent_answer_validations_total{result}`, `llm_calls_total{provider,purpose,outcome}`, `llm_tokens_total{provider,direction}` and `llm_fallbacks_total{provider}`. The API registers them on `/metrics` with `feature/streaming-api`.
-- **LangSmith.** Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. Each question becomes one trace in `LANGSMITH_PROJECT`, with every node, model call and search inside it. It is tagged `role:<role>` and carries `request_id` and `thread_id` as metadata. The key is passed to the client directly, so only runs started by `AgentService` are traced. Until `feature/guardrails` adds masking, traces contain the question as typed, so use tracing with the fictional sample data only.
+- **Metrics** ([telemetry.py](telemetry.py)), on a registry the caller passes in: `agent_runs_total{answer_kind}`, `agent_run_duration_seconds`, `agent_node_duration_seconds{node}`, `agent_node_errors_total{node,kind}`, `agent_answer_validations_total{result}`, `llm_calls_total{provider,purpose,outcome}`, `llm_tokens_total{provider,direction}` and `llm_fallbacks_total{provider}`. The API registers them on its `/metrics` endpoint.
+- **LangSmith.** Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. Each question becomes one trace in `LANGSMITH_PROJECT`, with every node, model call and search inside it. It is tagged `role:<role>` and carries `request_id` and `thread_id` as metadata. The tracer is passed to each run as a callback with our own client, so only runs started by `AgentService` are traced. The trace ID is the run's `run_id`, which the API sends to the client (`X-Run-ID`); a run the user walked away from shows as cancelled. Until `feature/guardrails` adds masking, traces contain the question as typed, so use tracing with the fictional sample data only.
 
 ## Trying it
 
@@ -163,9 +183,9 @@ After the answer, the command prints one line on how the run went: the nodes in 
 |---|---|
 | [tests/unit/test_llm_gateway.py](../tests/unit/test_llm_gateway.py) | Provider order, fallback, time limit, bad output, cancellation, errors logged by type only |
 | [tests/unit/test_agent_nodes.py](../tests/unit/test_agent_nodes.py) | Reducers, input cleaning, search plan checks, validator rules, prompt building |
-| [tests/graph/](../tests/graph/) | Full graph runs with a scripted fake model: routing per intent, failure containment, conversations and checkpoints |
+| [tests/graph/](../tests/graph/) | Full graph runs with a scripted fake model: routing per intent, failure containment, conversations and checkpoints, and the streamed events in order |
 | [tests/security/test_agent_permissions.py](../tests/security/test_agent_permissions.py) | A fooled model still gets nothing above the user's role (real search code, in-memory index); the role never comes from the conversation; the question is never logged |
 | [tests/integration/test_agents.py](../tests/integration/test_agents.py) | The service built from settings, the CLI, tracing labels, and the generated diagram |
 | [tests/live/test_agents_live.py](../tests/live/test_agents_live.py) | Each configured model answers (catches retired model names), and one real question end to end (`make test-live`) |
 
-The fake model is `ScriptedChatModel` in [tests/helpers/llm.py](../tests/helpers/llm.py). It takes replies per schema name (`"SupervisorDecision"`, `"SearchPlan"`) and plain text replies in order, so a test reads like the conversation it checks.
+The fake model is `ScriptedChatModel` in [tests/helpers/llm.py](../tests/helpers/llm.py). It takes replies per schema name (`"SupervisorDecision"`, `"SearchPlan"`) and plain text replies in order, so a test reads like the conversation it checks. It streams text word by word, like the real models do when LangGraph asks for tokens, and `PartialFailure` makes it fail half-way through an answer.

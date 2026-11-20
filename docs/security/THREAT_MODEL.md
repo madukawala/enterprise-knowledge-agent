@@ -55,10 +55,10 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | Threat | Example | Control | Test |
 |---|---|---|---|
 | **Spoofing** | Forged or expired JWT, `alg=none`, token from another issuer | JWKS signature check, issuer, audience and expiry; short-lived tokens | Forged, expired and wrong-audience tokens → 401 |
-| **Tampering** | Client sends `role=admin` or `user_id` in the body | Role and user ID read from the token only; strict request schemas reject unknown fields | Requests with injected fields are rejected or ignored |
+| **Tampering** | Client sends `role=admin` or `user_id` in the body | Role and user ID read from the token only; strict request schemas reject unknown fields | `POST /chat` with `role` or `access_level` in the body → 422 and nothing runs (`tests/security/test_chat_security.py`) |
 | **Repudiation** | User denies asking for restricted data | Append-only audit log: user, question, tools, documents, blocks, approvals, request ID. Caller-supplied request IDs are accepted only if short and plain, so they can't inject text into headers or logs | Integration test checks audit rows per request; unsafe request IDs are replaced |
 | **Information disclosure** | Stack traces, other users' threads, secrets in logs or health checks | Generic error responses with request ID; validation errors never echo submitted values; thread ownership check (404 for others); secret and PII redaction in logs; connection strings held as secrets; `/readyz` reports only `ok`, `failed` or `timeout` per check | User A can't read user B's thread or memory; error responses and `/readyz` contain no stack traces, submitted values or connection details (`tests/security/test_information_disclosure.py`); secret fields are redacted in logs (`tests/unit/test_logging.py`); connection strings are hidden when settings are printed, and a settings error never repeats the values it was given, so a misconfigured key is not printed at startup (`tests/unit/test_config.py`) |
-| **Denial of service** | Request floods, very long inputs, sandbox infinite loop | Rate limiting, size limits, timeouts, sandbox CPU / memory / time limits, client-disconnect cancellation | Load test shows 429s without other errors; sandbox loop is killed |
+| **Denial of service** | Request floods, very long inputs, abandoned streams, sandbox infinite loop | Rate limiting, size limits (2,000-character messages), a time limit on every chat run, one question at a time per conversation, client-disconnect cancellation, sandbox CPU / memory / time limits | A disconnected client's run is cancelled and no backup model is called; a slow run ends with a `timeout` event; a busy thread gets 409 (`tests/resilience/test_chat_stream.py`, `tests/integration/test_chat_api.py`); load test shows 429s without other errors; sandbox loop is killed |
 | **Elevation of privilege** | Analyst calls admin routes; agent coaxed into admin tools | Deny-by-default role matrix on routes, tools, MCP and retrieval | Role × endpoint × tool matrix test |
 
 ## Containers and the local stack
@@ -106,6 +106,16 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | Provider error messages leak prompt text into logs | Only the provider, outcome and error type are logged; the question is never logged | `tests/unit/test_llm_gateway.py`, `tests/security/test_agent_permissions.py` |
 | Traces sent to LangSmith contain personal data | Tracing is off unless switched on with a key; the key goes straight to the client, so only agent runs are traced; masking comes with guardrails | Tracing tests in `tests/integration/test_agents.py`; residual risk below |
 
+## Chat stream (`POST /chat`)
+
+| Threat | Control | Proven by |
+|---|---|---|
+| Anyone sets their own role with the development header | `X-Dev-Role` is a stand-in until `feature/auth-rbac`; it is refused with 401 when `APP_ENV=production`, and a missing header means `viewer`, the lowest role | `tests/security/test_chat_security.py` |
+| A user continues someone else's conversation and gets their earlier answers as context | Each thread belongs to the caller who started it; anyone else gets 404 and the question never runs. Thread IDs are random 128-bit values | `tests/security/test_chat_security.py`, `tests/unit/test_chat_stream_parts.py` |
+| The activity panel leaks what the answer would not | Events carry counts, collections, filters and citations only, never chunk text, prompts or raw model output | No chunk text in a full stream (`tests/security/test_chat_security.py`) |
+| An error during the stream shows internals | After the stream starts, failures become an `error` event with a fixed message; the traceback is logged with the request ID | `tests/resilience/test_chat_stream.py` |
+| Two questions in one conversation at once mix up its history | One run per thread; a second question gets 409 | `tests/integration/test_chat_api.py` |
+
 ## Python sandbox
 
 | Threat | Control | Test |
@@ -127,4 +137,6 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 - The hybrid weighting (`alpha` 0.5) was checked on 18 questions only ([docs/evals/retrieval.md](../evals/retrieval.md)). A larger, user-written question set could favour another value. This affects answer quality, not access control.
 - Until `feature/guardrails` adds masking, LangSmith traces contain questions and retrieved text as they are. Tracing is off by default and used with the fictional sample data only (ASSUMPTIONS O2).
 - The model writes the answer from retrieved text that is not yet cleaned or scanned for hidden instructions (`feature/guardrails`). The role filter limits what such text could reveal to what the user may already read.
+- Until `feature/auth-rbac`, a local API trusts the `X-Dev-Role` header, so anyone who can reach port 8000 on the machine can ask as an admin. The port is published on `127.0.0.1` only, and a production API refuses the header. Thread owners are roles for now, so two local users with the same role could continue each other's conversations if they shared a thread ID.
+- Conversations and their owners are kept in memory with no size limit until `feature/memory` moves them to Postgres. A long-running local API grows slowly with every new thread; restarting it clears them.
 - Keycloak runs in development mode (`start-dev`, plain HTTP) and the demo users have fixed passwords. This is acceptable on localhost only.

@@ -33,6 +33,9 @@ tests/
     llm.py               # fake chat models: plain replies, and ScriptedChatModel, which also
                          #   answers structured calls by schema name, fails or stalls on cue
     agents.py            # builders for agent tests: scripted plans, a fake search, a ready graph
+    chat.py              # the real API app with scripted agents, for POST /chat tests
+    sse.py               # calls a streaming endpoint like a browser does, reads the SSE events,
+                         #   and can disconnect half-way (httpx's test client cannot)
     tokens.py            # Keycloak-style JWTs signed with a test key, plus the matching JWKS
     pinecone.py          # in-memory Pinecone: embeddings, re-ranker, store, and an async index
                          #   that really scores records and applies metadata filters
@@ -42,8 +45,9 @@ tests/
   integration/
   security/
   graph/                 # full agent graph runs with the scripted model: routing, failure
-                         #   containment, conversations and checkpoints
-  resilience/            # added with feature/resilience
+                         #   containment, conversations and checkpoints, streamed events
+  resilience/            # the chat stream when the client leaves, a run is too slow, or
+                         #   something unplanned fails; feature/resilience adds the rest
   e2e/                   # added with feature/observability-evals
   live/                  # opt-in tests against real cloud services (`make test-live`)
   fixtures/
@@ -71,7 +75,7 @@ Test data in `tests/fixtures/` is separate from the demo corpus, so changing dem
 | `token_factory` | Custom tokens: expired, wrong issuer, wrong audience, and the JWKS to verify them |
 | `fake_llm` | `fake_llm(["reply 1", "reply 2"])` returns a chat model that answers with those replies in order |
 
-For the agents, `tests/helpers/llm.py` adds `ScriptedChatModel`. Structured replies are scripted per schema name, and text replies in order. A scripted exception is raised instead of a reply, and `delay` makes every call slow. `prompts_for(name)` returns what was sent, so tests can check prompts too:
+For the agents, `tests/helpers/llm.py` adds `ScriptedChatModel`. Structured replies are scripted per schema name, and text replies in order. A scripted exception is raised instead of a reply, and `delay` makes every call slow. It streams text word by word when LangGraph asks for tokens (`token_delay` slows each word), and a `PartialFailure("Half an ans", RuntimeError())` reply streams some words and then fails, like a model breaking in the middle of an answer. `prompts_for(name)` returns what was sent, so tests can check prompts too:
 
 ```python
 model = ScriptedChatModel(
@@ -140,7 +144,7 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 | `feature/sample-data-ingestion` | Front-matter checks (every rule, all problems reported at once); section-aware chunking with property tests (no words lost, chunks under the token limit); BM25 maths and save/load; stable IDs; re-running changes nothing; stale records removed; nothing saved when Pinecone fails; YAML code tags, symlinks and missing access levels refused; the API key never printed; the demo corpus keeps its promised shape (`test_sample_corpus.py`); one live embedding call |
 | `feature/hybrid-retrieval` | The score merge as a property test (one dot product equals `alpha × dense + (1 − alpha) × BM25`); every filter and both ends of a date range; no optional filter can widen access (property test); each role sees only its levels, even when the filter is broken on purpose; parallel queries, a failing or slow collection gives a partial result, all failing gives a clear error, cancellation stops every query; re-ranker order used, and its failure keeps the hybrid order; the question never logged; hit rate, MRR and recall maths; the question set stays true to the documents; filters, metadata and re-ingestion against Pinecone Local (opt-in); live searches, including the hybrid score checked against real Pinecone |
 | `feature/langgraph-agents` | Routing for each intent and failure containment with a scripted fake model: the model, search, the re-ranker or one node failing never breaks the run, and the answer says what was missing; a rejected draft is rewritten once, then replaced by the source list; citations to sources never retrieved are rejected; follow-up questions in one thread, a clean slate per question, and checkpoints read back with an allow-list; a fooled model still gets nothing above the user's role (real search code); the role never comes from the conversation; provider failover, time limits and cancellation in the model gateway; trace labels; the generated graph diagram matches the code; each real model answers (live) |
-| `feature/streaming-api` | SSE event order, client disconnect and cancellation |
+| `feature/streaming-api` | The full event order for a document question, a blocked question and small talk; the tokens add up to the answer; a rewrite and a model failing mid-answer each start the text again, and `response_end` has the final text; `NOT_FOUND` never streams; search down is reported as degraded; SSE format (one JSON line, `seq` from 1, request, run and thread IDs); follow-up questions in one thread; 422 for bad bodies, 409 for a busy thread, 503 without a model; a client that disconnects cancels the run and the backup model is never called; the time limit ends with an `error` event; keep-alives while quiet; an unexpected failure gives a safe `error` event and a logged traceback; no role or access level from the body; the dev role header refused in production; another caller's thread is not found; no chunk text in the stream; stream metrics on `/metrics`; startup with and without a model key |
 | `feature/streamlit-ui` | Event rendering helpers; e2e smoke test later |
 | `feature/auth-rbac` | Forged and expired tokens, full role × endpoint × tool matrix |
 | `feature/rate-limiting` | Token-bucket maths, concurrent requests, 429 responses, daily token budget |
