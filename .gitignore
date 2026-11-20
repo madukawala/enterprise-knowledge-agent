@@ -87,3 +87,6 @@ Thumbs.db
 # ---------------------------------------------------------------
 docker-compose.override.yml
 compose.override.yaml
+# Trivy output when the scan is run by hand
+trivy-results.*
+.trivycache/

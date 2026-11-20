@@ -57,9 +57,20 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | **Spoofing** | Forged or expired JWT, `alg=none`, token from another issuer | JWKS signature check, issuer, audience and expiry; short-lived tokens | Forged, expired and wrong-audience tokens → 401 |
 | **Tampering** | Client sends `role=admin` or `user_id` in the body | Role and user ID read from the token only; strict request schemas reject unknown fields | Requests with injected fields are rejected or ignored |
 | **Repudiation** | User denies asking for restricted data | Append-only audit log: user, question, tools, documents, blocks, approvals, request ID. Caller-supplied request IDs are accepted only if short and plain, so they can't inject text into headers or logs | Integration test checks audit rows per request; unsafe request IDs are replaced |
-| **Information disclosure** | Stack traces, other users' threads, secrets in logs | Generic error responses with request ID; validation errors never echo submitted values; thread ownership check (404 for others); secret and PII redaction in logs | User A can't read user B's thread or memory; error responses contain no stack traces or submitted values (`tests/security/test_information_disclosure.py`); secret fields are redacted in logs (`tests/unit/test_logging.py`) |
+| **Information disclosure** | Stack traces, other users' threads, secrets in logs or health checks | Generic error responses with request ID; validation errors never echo submitted values; thread ownership check (404 for others); secret and PII redaction in logs; connection strings held as secrets; `/readyz` reports only `ok`, `failed` or `timeout` per check | User A can't read user B's thread or memory; error responses and `/readyz` contain no stack traces, submitted values or connection details (`tests/security/test_information_disclosure.py`); secret fields are redacted in logs (`tests/unit/test_logging.py`); connection strings are hidden when settings are printed (`tests/unit/test_config.py`) |
 | **Denial of service** | Request floods, very long inputs, sandbox infinite loop | Rate limiting, size limits, timeouts, sandbox CPU / memory / time limits, client-disconnect cancellation | Load test shows 429s without other errors; sandbox loop is killed |
 | **Elevation of privilege** | Analyst calls admin routes; agent coaxed into admin tools | Deny-by-default role matrix on routes, tools, MCP and retrieval | Role × endpoint × tool matrix test |
+
+## Containers and the local stack
+
+| Threat | Control | Proven by |
+|---|---|---|
+| Services reachable from other machines on the network | Ports published on `127.0.0.1` only; Postgres and Redis have no published ports | `compose.yaml` review; `make compose-check` in CI |
+| A compromised container reaches the databases or the internet | `backend` network is internal (no egress); only the API and Keycloak join both networks | `compose.yaml` review |
+| A bug in the API process changes files or gains privileges | Non-root user (UID 10001), read-only file system, all Linux capabilities dropped, `no-new-privileges` | `compose.yaml` and Dockerfile review; Trivy config scan in CI |
+| Vulnerable packages in an image | Minimal two-stage image, exact base image tags, Trivy image scan | CI fails on fixable high or critical findings |
+| Default or leaked passwords | Passwords only in `.env`, with no defaults in `compose.yaml`; each service gets only its own variables; Keycloak has its own database user | `docker compose config` fails without them; gitleaks |
+| One service uses all the memory | Memory limit on every service | `compose.yaml` review |
 
 ## Python sandbox
 
@@ -77,3 +88,5 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 - Free-tier LLM providers may keep submitted data; only fictional data is used ([ASSUMPTIONS.md](../ASSUMPTIONS.md), M3).
 - Localhost runs over HTTP; production needs TLS and a secrets manager (S1, S2).
 - Alerting is not in scope (O1).
+- `/metrics`, `/docs` and the health endpoints need no login. They are reachable only from the local machine, and they hold request counts and timings, not user data. A real deployment would expose `/metrics` only on the internal network.
+- Keycloak runs in development mode (`start-dev`, plain HTTP) and the demo users have fixed passwords. This is acceptable on localhost only.
