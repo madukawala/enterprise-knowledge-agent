@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------
+# Secrets and local settings
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments (uv creates .venv)
+.venv/
+venv/
+env/
+
+# ---------------------------------------------------------------
+# Tool caches
+# ---------------------------------------------------------------
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+.cache/
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------
+# Test, coverage and evaluation output
+# ---------------------------------------------------------------
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+reports/
+test-results/
+playwright-report/
+locust-report*.html
+
+# ---------------------------------------------------------------
+# Generated data
+# ---------------------------------------------------------------
+# Ingestion output (fitted BM25 parameters, document catalog);
+# rebuilt with `make ingest`
+data/index/
+# Local Docker volume data, if bind-mounted
+.docker-data/
+# Logs
+logs/
+*.log
+
+# ---------------------------------------------------------------
+# Editors and operating systems
+# ---------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# draw.io backup and lock files
+*.drawio.bkp
+*.drawio.dtmp
+.$*
+
+# ---------------------------------------------------------------
+# Docker Compose local overrides
+# ---------------------------------------------------------------
+docker-compose.override.yml
+compose.override.yaml
