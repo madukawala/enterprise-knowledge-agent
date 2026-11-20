@@ -1,6 +1,6 @@
 # Testing strategy
 
-Every feature branch ships with its own tests, and CI must pass before a branch is merged into `develop`. This document describes the test layers, tools and gates. The test harness itself is set up in `feature/project-scaffold`.
+Every feature branch ships with its own tests, and CI must pass before a branch is merged into `develop`. This document describes the test layers, tools and gates. The test harness was set up in `feature/project-scaffold`.
 
 ![Test pyramid](architecture/test-pyramid.drawio.svg)
 
@@ -24,24 +24,42 @@ Every feature branch ships with its own tests, and CI must pass before a branch 
 | **End-to-end** | `e2e` | One smoke test per role: log in through Keycloak → ask → see the streamed answer and the activity panel | Playwright (Python) against `docker compose up` | Nightly / manual |
 | **Load** *(optional)* | — | Concurrent users against the async API; the rate limiter returns 429s without other errors | Locust | Manual |
 
-## Planned layout
+## Layout
 
 ```text
 tests/
-  conftest.py            # shared fixtures: fake LLMs, tokens per role, app client
-  fixtures/              # small dummy documents (incl. a poisoned one), MCP data
+  conftest.py            # shared fixtures: settings, app, HTTP client, tokens per role, fake LLMs
+  helpers/
+    llm.py               # fake chat model that returns scripted replies
+    tokens.py            # Keycloak-style JWTs signed with a test key, plus the matching JWKS
   unit/
   integration/
-  graph/
   security/
-    attacks.yaml         # direct and indirect injection, leakage, tool abuse
-  resilience/
-  e2e/
+  graph/                 # added with feature/langgraph-agents
+  resilience/            # added with feature/resilience
+  e2e/                   # added with feature/observability-evals
+  fixtures/              # small dummy documents (incl. a poisoned one), MCP data; added with ingestion
 evals/
-  datasets/              # golden questions with expected sources
+  datasets/              # golden questions with expected sources; added with feature/observability-evals
 ```
 
-Test data in `tests/fixtures/` is separate from the demo corpus, so changing demo documents never breaks tests.
+Test data in `tests/fixtures/` is separate from the demo corpus, so changing demo documents never breaks tests. The attack dataset `tests/security/attacks.yaml` arrives with `feature/guardrails`.
+
+### Markers
+
+- A test gets its layer marker from its folder (`tests/security/` → `security`), set in `tests/conftest.py`. Nobody has to remember to add it, and `make test-security` always finds every security test.
+- Unknown markers are an error (`--strict-markers`), so a typo cannot silently skip a test.
+- A plain `pytest` run leaves out `live`, `eval` and `e2e` tests. They need real API keys or the running stack and are only run on purpose, for example `pytest -m live`.
+
+### Shared fixtures
+
+| Fixture | Gives you |
+|---|---|
+| `settings` | Test settings that ignore any local `.env` file |
+| `app`, `client` | A fresh FastAPI app and an async HTTP client for it. Server errors come back as the 500 response a user would see. Override `app` in a test module to add routes that fail on purpose |
+| `viewer_token`, `analyst_token`, `admin_token` | Signed tokens for one test user per role |
+| `token_factory` | Custom tokens: expired, wrong issuer, wrong audience, and the JWKS to verify them |
+| `fake_llm` | `fake_llm(["reply 1", "reply 2"])` returns a chat model that answers with those replies in order |
 
 ## Attack dataset format
 
@@ -66,14 +84,14 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 | `make test-unit` | fast unit tests only |
 | `make test-security` | security suite |
 | `make test-live` | tests that call real LLMs, Pinecone and LangSmith |
-| `make eval` | Ragas and LangSmith evaluations; writes results to `docs/evals/` |
-| `make e2e` | Playwright smoke tests against the running stack |
-| `make load` | Locust load test |
+| `make eval` | Ragas and LangSmith evaluations; writes results to `docs/evals/` (from `feature/observability-evals`) |
+| `make e2e` | Playwright smoke tests against the running stack (from `feature/observability-evals`) |
+| `make load` | Locust load test (from `feature/observability-evals`) |
 
-- **Coverage:** `pytest-cov`, minimum **80%** on the core packages (`agents/`, `rag/`, `security/`, `api/`). The UI is covered by the end-to-end smoke tests.
-- **Static checks:** `ruff` (lint and format), `mypy --strict` on core packages.
-- **pre-commit:** ruff, mypy, gitleaks, end-of-file and YAML checks.
-- **CI (`.github/workflows/ci.yml`):** lint → type check → tests with coverage → `bandit` → `pip-audit` → `gitleaks` → Trivy scan of built images. Results show as badges in the README.
+- **Coverage:** `pytest-cov`, minimum **80%** with branch coverage on the core packages (`api/`, `core/`, `security/` today, then `agents/` and `rag/` as they are added; the list is in `[tool.coverage.run]` in `pyproject.toml`). The UI is covered by the end-to-end smoke tests.
+- **Static checks:** `ruff` (lint and format), `mypy --strict` on the application packages, and `import-linter` for package boundaries.
+- **pre-commit:** ruff, mypy, the import boundary check, gitleaks, and end-of-file, whitespace, YAML and TOML checks.
+- **CI (`.github/workflows/ci.yml`):** lint → type check → import boundary check (the UI must not import backend code) → tests with coverage → `bandit` → `pip-audit` → `gitleaks` → Trivy scan of built images (Trivy is added with the images in `feature/docker-infra`). The result shows as a badge in the README. `make check` runs the same checks locally, except gitleaks.
 
 ## Definition of done for every branch
 

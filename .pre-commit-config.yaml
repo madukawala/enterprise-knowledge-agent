@@ -1,0 +1,52 @@
+# Checks that run on your machine before each commit.
+# Set up once with `make install` (or `uv run pre-commit install`).
+# Run on every file with `uv run pre-commit run --all-files`.
+#
+# ruff, mypy and import-linter run through uv, so they use exactly the
+# versions in uv.lock, the same as CI.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: import-boundaries
+        name: import boundaries
+        entry: uv run lint-imports
+        language: system
+        types: [python]
+        pass_filenames: false

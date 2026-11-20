@@ -1,0 +1,90 @@
+# Runs on every pull request and on pushes to develop and main.
+# A branch is merged only when every job here is green.
+#
+# Order: lint -> type check -> import boundaries -> tests with coverage,
+# with the security checks running alongside. The Trivy image scan is
+# added together with the Docker images in feature/docker-infra.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, types and import boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+      - name: Formatting
+        run: uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Import boundaries (the UI must not import backend code)
+        run: uv run lint-imports
+
+  test:
+    name: Tests and coverage
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Run tests with the coverage gate
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  security:
+    name: Security checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Security lint (bandit)
+        run: uv run bandit -q -c pyproject.toml -r api core security ui
+      - name: Known vulnerabilities in dependencies (pip-audit)
+        run: |
+          uv export --frozen --all-groups --no-emit-project --format requirements-txt \
+            -o "$RUNNER_TEMP/requirements-audit.txt" -q
+          uv run pip-audit --strict --disable-pip -r "$RUNNER_TEMP/requirements-audit.txt"
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

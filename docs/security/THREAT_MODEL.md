@@ -56,8 +56,8 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 |---|---|---|---|
 | **Spoofing** | Forged or expired JWT, `alg=none`, token from another issuer | JWKS signature check, issuer, audience and expiry; short-lived tokens | Forged, expired and wrong-audience tokens → 401 |
 | **Tampering** | Client sends `role=admin` or `user_id` in the body | Role and user ID read from the token only; strict request schemas reject unknown fields | Requests with injected fields are rejected or ignored |
-| **Repudiation** | User denies asking for restricted data | Append-only audit log: user, question, tools, documents, blocks, approvals, request ID | Integration test checks audit rows per request |
-| **Information disclosure** | Stack traces, other users' threads, secrets in logs | Generic error responses with request ID; thread ownership check (404 for others); secret and PII redaction in logs | User A can't read user B's thread or memory; error responses contain no stack traces |
+| **Repudiation** | User denies asking for restricted data | Append-only audit log: user, question, tools, documents, blocks, approvals, request ID. Caller-supplied request IDs are accepted only if short and plain, so they can't inject text into headers or logs | Integration test checks audit rows per request; unsafe request IDs are replaced |
+| **Information disclosure** | Stack traces, other users' threads, secrets in logs | Generic error responses with request ID; validation errors never echo submitted values; thread ownership check (404 for others); secret and PII redaction in logs | User A can't read user B's thread or memory; error responses contain no stack traces or submitted values (`tests/security/test_information_disclosure.py`); secret fields are redacted in logs (`tests/unit/test_logging.py`) |
 | **Denial of service** | Request floods, very long inputs, sandbox infinite loop | Rate limiting, size limits, timeouts, sandbox CPU / memory / time limits, client-disconnect cancellation | Load test shows 429s without other errors; sandbox loop is killed |
 | **Elevation of privilege** | Analyst calls admin routes; agent coaxed into admin tools | Deny-by-default role matrix on routes, tools, MCP and retrieval | Role × endpoint × tool matrix test |
 
@@ -69,6 +69,7 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | Network access | Container on an internal network with no egress | Socket or HTTP call fails |
 | Process escape | No `os`, `subprocess`, `ctypes`; AST validator for search plans; allow-listed imports for analysis code | Import attempts rejected before running |
 | Resource exhaustion | CPU, memory, wall-clock and output size limits | Infinite loop and memory bomb are killed |
+| Misuse of installed code or keys | Minimal image with its own dependency file: data-analysis libraries only, no project code, no LLM or database clients, no API keys | Image contents checked in CI; importing a project module or reading an API key from the environment fails |
 
 ## Residual risks
 
