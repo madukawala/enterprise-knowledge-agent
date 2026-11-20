@@ -4,7 +4,8 @@
 .DEFAULT_GOAL := help
 .PHONY: help install lint format typecheck imports test test-unit test-security test-live \
         audit check run-api clean env-file up up-dev up-observability down down-volumes \
-        ps logs compose-check scan-image ingest ingest-check
+        ps logs compose-check scan-image ingest ingest-check search eval-retrieval \
+        test-pinecone-local
 
 UV_RUN := uv run
 # Exported from uv.lock for pip-audit. Kept in .cache/, which git ignores.
@@ -14,6 +15,8 @@ COMPOSE := docker compose
 API_IMAGE := enterprise-knowledge-agent/api:local
 # Trivy runs from its official image, so nothing extra is installed locally.
 TRIVY_IMAGE := aquasec/trivy:0.76.2
+# Every optional Compose profile, so `make down`, `ps` and `logs` see all services.
+ALL_PROFILES := --profile observability --profile pinecone-local
 
 help: ## Show this list
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -59,12 +62,19 @@ test-security: ## Security tests only
 test-live: ## Tests that call real cloud services (uses your API keys and quota)
 	$(UV_RUN) pytest -m live || [ $$? -eq 5 ]
 
+# Starts Pinecone's emulator in Docker, runs the search tests against it,
+# then stops it. No account or key needed.
+test-pinecone-local: ## Search tests against Pinecone Local (Docker, no account needed)
+	$(COMPOSE) --profile pinecone-local up -d --wait pinecone-local
+	PINECONE_LOCAL_HOST=http://localhost:5080 $(UV_RUN) pytest tests/integration/test_pinecone_local.py -v; \
+		status=$$?; $(COMPOSE) --profile pinecone-local stop pinecone-local; exit $$status
+
 # ---------------------------------------------------------------
 # Security checks
 # ---------------------------------------------------------------
 
 audit: ## Security lint (bandit) and known vulnerabilities in dependencies (pip-audit)
-	$(UV_RUN) bandit -q -c pyproject.toml -r api core security rag ingestion ui
+	$(UV_RUN) bandit -q -c pyproject.toml -r api core security rag ingestion evals ui
 	@mkdir -p $(dir $(AUDIT_REQUIREMENTS))
 	uv export --frozen --all-groups --no-emit-project --format requirements-txt \
 		-o $(AUDIT_REQUIREMENTS) -q
@@ -87,6 +97,19 @@ ingest: ## Load data/sample_docs into Pinecone (needs PINECONE_API_KEY). Safe to
 
 ingest-check: ## Check and chunk the documents without calling Pinecone (no key needed)
 	$(UV_RUN) python -m ingestion --dry-run
+
+# Example: make search Q="why do card payments fail?" ROLE=analyst
+# Q and ROLE reach the command as environment variables ("$$Q"), so quotes
+# or $(...) in a question are passed on as text, never run by the shell.
+ROLE ?= viewer
+search: export Q := $(Q)
+search: export ROLE := $(ROLE)
+search: ## Search the index as a role: make search Q="your question" ROLE=analyst
+	@test -n "$$Q" || { echo 'Usage: make search Q="your question" [ROLE=viewer|analyst|admin]'; exit 1; }
+	$(UV_RUN) python -m rag.cli "$$Q" --role "$$ROLE"
+
+eval-retrieval: ## Hit rate and MRR for several alpha values; saves docs/evals/retrieval.md
+	$(UV_RUN) python -m evals.retrieval --report docs/evals/retrieval.md
 
 # ---------------------------------------------------------------
 # Running: the API on its own
@@ -112,20 +135,20 @@ up-observability: env-file ## Same as up, plus Prometheus (:9090) and Grafana (:
 	$(COMPOSE) --profile observability up -d --build --wait
 
 down: ## Stop the stack and keep the data
-	$(COMPOSE) --profile observability down
+	$(COMPOSE) $(ALL_PROFILES) down
 
 down-volumes: ## Stop the stack and delete all local data (database, Keycloak, metrics)
-	$(COMPOSE) --profile observability down -v
+	$(COMPOSE) $(ALL_PROFILES) down -v
 
 ps: ## Show each service and its health
-	$(COMPOSE) --profile observability ps
+	$(COMPOSE) $(ALL_PROFILES) ps
 
 logs: ## Follow the logs of every service (Ctrl+C to stop)
-	$(COMPOSE) --profile observability logs -f --tail=100
+	$(COMPOSE) $(ALL_PROFILES) logs -f --tail=100
 
 compose-check: env-file ## Check compose.yaml for mistakes without starting anything
 	$(COMPOSE) config --quiet
-	$(COMPOSE) --profile observability config --quiet
+	$(COMPOSE) $(ALL_PROFILES) config --quiet
 	$(COMPOSE) -f compose.yaml -f compose.dev.yaml config --quiet
 
 clean: ## Remove caches and test output

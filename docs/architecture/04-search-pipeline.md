@@ -32,15 +32,26 @@ flowchart TB
     R --> P["Permission filter<br/>access_level in role's levels<br/>+ department and date filters"]
     P --> V["Encode the query<br/>dense: e5, input_type=query<br/>sparse: BM25 encode_queries"]
     V --> W["Weight the vectors<br/>dense x alpha<br/>sparse x (1 - alpha)"]
-    W --> S["Hybrid query per namespace<br/>run in parallel (asyncio)"]
-    S --> M["Merge and de-duplicate<br/>top-k by hybrid score"]
+    W --> S["Hybrid query per namespace<br/>run in parallel (asyncio)<br/>time limit on each"]
+    S --> M["Merge and de-duplicate<br/>by hybrid score,<br/>max 3 chunks per document"]
     M --> K{"Re-ranker<br/>available?"}
-    K -- yes --> RR["bge-reranker-v2-m3<br/>keep top-n"]
-    K -- "no / quota" --> HO["Keep hybrid order"]
+    K -- yes --> RR["bge-reranker-v2-m3<br/>best 30 in, top-k out"]
+    K -- "no / quota / error" --> HO["Keep hybrid order"]
     RR --> CL["Clean chunks<br/>strip hidden instructions,<br/>HTML, zero-width characters"]
     HO --> CL
     CL --> O["Chunks with citations<br/>doc_id, title, section"]
 ```
+
+The query side is built in [rag/retrieval.py](../../rag/retrieval.py) (see [rag/README.md](../../rag/README.md)):
+
+| Step | Status |
+|---|---|
+| Permission filter, department / type / severity / date / document filters | Built ([rag/filters.py](../../rag/filters.py)) |
+| Encode, weight, query namespaces in parallel, merge, re-rank, citations | Built |
+| Choose namespaces by intent, rewrite the query | With the retrieval agent (`feature/langgraph-agents`); until then the caller picks the namespaces, all six by default |
+| Clean chunks | With `feature/guardrails` |
+
+If some namespaces fail or time out, the others still answer and the result lists what was missed. Search fails only when every namespace fails or the question cannot be embedded. Cancelling a search (for example the user closing the page) cancels every running query.
 
 ## How the dense and sparse scores are combined
 
@@ -55,7 +66,7 @@ Because the dot product is linear, Pinecone then returns:
 score = alpha × (dense_q · dense_d) + (1 − alpha) × (sparse_q · sparse_d)
 ```
 
-That is the weighted combination of the dense score and the BM25 score that the assignment asks for, computed in one query. `alpha` defaults to `0.5` and is tuned with the evaluation set (hit rate and MRR, see [TESTING.md](../TESTING.md)).
+That is the weighted combination of the dense score and the BM25 score that the assignment asks for, computed in one query. `alpha` defaults to `0.5` and is tuned with `make eval-retrieval` (hit rate and MRR, see [evals/README.md](../../evals/README.md)). It must be above 0, because Pinecone does not accept an all-zero dense vector; a question with no searchable words sends no sparse part.
 
 ## Chunk metadata (used for filters and citations)
 

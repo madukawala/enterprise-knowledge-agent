@@ -6,15 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from ingestion.pipeline import (
-    BM25_FILE,
-    CATALOG_FILE,
-    PreparedCorpus,
-    prepare_corpus,
-    run_ingestion,
-)
+from ingestion.pipeline import PreparedCorpus, prepare_corpus, run_ingestion
+from rag.bm25 import PARAMS_FILE as BM25_FILE
 from rag.bm25 import BM25Encoder
-from rag.catalog import Catalog
+from rag.catalog import CATALOG_FILE, Catalog
 from rag.embeddings import PineconeEmbedder
 from rag.schema import Collection
 from security.roles import AccessLevel

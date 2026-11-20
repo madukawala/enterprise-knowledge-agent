@@ -47,9 +47,14 @@ Where the assignment leaves something open, this file records the choice made an
 
 | # | Assumption | Reason |
 |---|---|---|
-| R1 | Hybrid weighting `alpha` starts at 0.5 and is tuned with the evaluation set. | Dense and sparse scores have different scales. |
+| R1 | Hybrid weighting `alpha` starts at 0.5 and is tuned with the evaluation set (`make eval-retrieval`, 18 questions). Until the first run is recorded in [docs/evals](evals/README.md), 0.5 is an untested default. `alpha` must be above 0, so pure keyword search is not offered. | Dense and sparse scores have different scales. At 0 the dense query vector would be all zeros, which Pinecone does not accept. |
 | R2 | The RLM plan language has four functions (`search`, `filter_by`, `batch`, `fetch_section`). Research depth is limited to 3 and fan-out to 5. | Safety and free-tier quotas ([ADR-0011](adr/0011-rlm-python-search-plans-in-sandbox.md)). |
 | R3 | A citation is valid only if the cited `doc_id` and section were retrieved in the same run and the quoted text matches the chunk. | Guards against hallucinated citations. |
+| R4 | A search returns at most 3 chunks from one document (8 chunks in total by default). | Keeps several sources in the answer instead of one long document filling every slot. |
+| R5 | If some collections fail or time out, search returns what the others found and lists the missed collections. It fails only when every collection fails or the question cannot be embedded. | A partial answer that says what is missing is more useful than no answer. |
+| R6 | Until the retrieval agent exists (`feature/langgraph-agents`), the caller chooses the collections, and the default is all six. Query rewriting also arrives with the agent. | Both need the language model. |
+| R7 | Retrieval and evaluation metrics count documents, not chunks. | What an answer needs is the right document; three chunks of one runbook are one source. |
+| R8 | The evaluation question set was written by the same person who wrote the documents. | It checks the search works as designed, not how it would do on real staff questions. A real project would collect questions from users. |
 
 ## Memory
 
@@ -66,6 +71,8 @@ Where the assignment leaves something open, this file records the choice made an
 | S2 | Secrets are kept in `.env` (git-ignored). Production would use a secrets manager (Vault or a cloud equivalent). | Localhost demo. |
 | S3 | Rate limits (requests per minute per user and per role, daily token budget) are set in config and changed by Admins; values are tuned for a demo, not production traffic. | The assignment asks for configurable limits. |
 | S4 | If Redis is unavailable, the API falls back to an in-process token bucket with stricter limits, and logs a warning. | Keeps the service available while still bounding usage. |
+| S5 | `make search` takes the role as an option, for local testing. | Anyone who can run it already holds the Pinecone key and could read the index directly. In the app the role always comes from the login token. |
+| S6 | Search logs never contain the question text, only its length. | Questions can contain personal data. The question reaches LangSmith only after PII masking (`feature/guardrails`). |
 
 ## Observability and operations
 
@@ -82,6 +89,7 @@ Where the assignment leaves something open, this file records the choice made an
 | Cloud free-tier LLMs vs local models | Better models, no laptop RAM used, real cross-provider failover | Needs internet; provider quotas |
 | Plain LangGraph vs prebuilt agents | Full control of routing, role checks and streaming events | More code to write |
 | One hybrid index vs two indexes + RRF | True score combination, one query per namespace | `alpha` must be tuned |
+| Pinecone Local plus in-memory fakes vs real Pinecone in CI | Free, fast, no account or quota in CI; the emulator checks the real filter syntax, namespaces, the async client and re-running ingestion | The emulator ignores sparse vectors and only speaks the older control-plane API, so the hybrid score and the hosted models (embeddings, re-ranker) are checked only by the live tests |
 | Keycloak vs hard-coded users | Real OIDC tokens and expiry | One more container, login step |
 | Docker Compose only | Same stack everywhere, one command | Image downloads on first start |
 | Small RLM plan language | Safe, testable | Less flexible plans |

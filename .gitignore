@@ -63,6 +63,10 @@ data/index/
 # Temporary files left if a save is interrupted (ingestion writes to a
 # temporary file first, then renames it)
 *.tmp
+# Your own question sets for `python -m evals.retrieval --dataset ...`.
+# The shared set (evals/datasets/retrieval.yaml) and the report from
+# `make eval-retrieval` (docs/evals/retrieval.md) are committed.
+evals/datasets/*.local.yaml
 # Local Docker volume data, if bind-mounted
 .docker-data/
 # Logs

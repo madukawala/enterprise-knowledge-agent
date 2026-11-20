@@ -1,0 +1,108 @@
+# Retrieval evaluation set: questions with the documents that answer them.
+#
+# Used by `make eval-retrieval` to measure hit rate and MRR, and to choose
+# HYBRID_ALPHA. Each question lists every document that is a good source;
+# finding any one of them in the top k counts as a hit.
+#
+# Rules (checked by tests/unit/test_eval_dataset.py):
+# - every expected document exists in data/sample_docs;
+# - the question's role may read every expected document;
+# - if `collections` is given, every expected document is in one of them.
+#
+# The mix is deliberate: some questions use the bank's own words and codes
+# (BM25 should help), some are paraphrased (the dense vector should help),
+# and some use filters.
+
+cases:
+  - id: pool-exhaustion
+    question: What should I do when the PayHub database connection pool runs out?
+    role: viewer
+    expected: [RB-001]
+
+  - id: certificate-renewal
+    question: How do we renew the mTLS client certificate for the Network Gateway?
+    role: analyst
+    expected: [RB-002, ARC-006]
+
+  - id: instant-transfer-limit
+    question: What is the daily limit for Helix Instant Transfer?
+    role: viewer
+    expected: [PS-001]
+
+  - id: cut-off-times
+    question: What are the daily cut-off times for each payment type?
+    role: viewer
+    expected: [POL-007]
+
+  - id: sev1-status-page
+    question: How quickly must the status page be updated during a SEV1?
+    role: viewer
+    expected: [POL-004, RB-009]
+
+  - id: canary-rule
+    question: Do changes to payment flows have to go out as a canary release?
+    role: viewer
+    expected: [POL-005, MTG-003]
+
+  - id: incident-by-id
+    question: INC-2026-003
+    role: analyst
+    expected: [INC-2026-003, MTG-002]
+
+  - id: hsm-firmware
+    question: Why did card payments fail after the HSM firmware update?
+    role: analyst
+    expected: [INC-2025-022]
+
+  - id: degraded-mode
+    question: How does the gateway keep instant payments going when the scheme is slow to respond?
+    role: viewer
+    expected: [RB-003, ARC-003]
+
+  - id: kafka-lag
+    question: How do I fix consumer lag in the Payment Status Service?
+    role: viewer
+    expected: [RB-004, ARC-005]
+
+  - id: break-glass
+    question: When are break-glass accounts allowed to be used?
+    role: admin
+    expected: [POL-006]
+
+  - id: office-days
+    question: How many days a week should office staff work from the office?
+    role: viewer
+    expected: [POL-009]
+
+  - id: freeze-card
+    question: Can customers freeze their card themselves in the app?
+    role: viewer
+    expected: [PS-006, PS-002]
+
+  - id: mobile-login
+    question: Why could customers not log in to Helix Mobile after the key rotation?
+    role: viewer
+    expected: [INC-2026-034]
+
+  - id: vendor-review
+    question: What was agreed with NorthClear about the FastLane outages?
+    role: analyst
+    expected: [MTG-006]
+
+  - id: config-rollback
+    question: How do I roll back a bad configuration change in production?
+    role: viewer
+    expected: [RB-005]
+
+  - id: payroll-file
+    question: What happens if the payroll file cannot be submitted on time?
+    role: viewer
+    expected: [RB-010, INC-2026-026]
+
+  - id: month-end-failures-filtered
+    question: Month-end payment failures in PayHub
+    role: analyst
+    collections: [incidents]
+    filters:
+      date_from: 2026-05-01
+    expected: [INC-2026-021, INC-2026-032]

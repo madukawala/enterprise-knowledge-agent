@@ -30,13 +30,11 @@ from core.logging import get_logger
 from ingestion.catalog import build_catalog
 from ingestion.chunker import Chunk, ChunkingConfig, chunk_document, embedding_text
 from ingestion.loader import SourceDocument, load_documents
+from rag.bm25 import PARAMS_FILE as BM25_FILE
 from rag.bm25 import BM25Encoder
-from rag.catalog import Catalog
+from rag.catalog import CATALOG_FILE, Catalog
 from rag.schema import ChunkMetadata, Collection, chunk_id
 from rag.vector_store import VectorRecord
-
-BM25_FILE = "bm25_params.json"
-CATALOG_FILE = "catalog.json"
 
 log = get_logger(__name__)
 

@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 
 FORMAT_VERSION = 1
+# Saved by ingestion in INDEX_ARTIFACTS_DIR, loaded by retrieval.
+PARAMS_FILE = "bm25_params.json"
 
 # Words, numbers and joined codes such as "payhub-db", "inc-2026-003" or
 # "payments.status". The parts of a joined code are added as well, so a
