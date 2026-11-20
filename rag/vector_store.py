@@ -5,7 +5,8 @@ metadata (ADR-0003). The index must use the `dotproduct` metric, because
 that is the only metric that adds the dense and sparse scores together.
 
 Ingestion uses this class to create the index and keep it in sync with the
-documents. Searching is added by the hybrid retrieval branch.
+documents. Search uses Pinecone's async client instead (rag/retrieval.py),
+because it runs inside the async API.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -65,9 +66,13 @@ class PineconeHybridStore:
         dimension: int,
         cloud: str,
         region: str,
+        index_host: str = "",
     ) -> None:
         self._client = client
         self.index_name = index_name
+        # Normally empty: the client looks the host up by name. Set it for
+        # Pinecone Local, whose index hosts are plain http://localhost URLs.
+        self.index_host = index_host
         self.dimension = dimension
         self.cloud = cloud
         self.region = region
@@ -102,7 +107,7 @@ class PineconeHybridStore:
 
     def _data_plane(self) -> Any:
         if self._index is None:
-            self._index = self._client.Index(name=self.index_name)
+            self._index = self._client.Index(name=self.index_name, host=self.index_host)
         return self._index
 
     def upsert(self, namespace: str, records: Sequence[VectorRecord]) -> None:

@@ -8,7 +8,8 @@ from pydantic import SecretStr
 
 import ingestion.cli as cli
 from core.config import Settings
-from ingestion.pipeline import BM25_FILE, CATALOG_FILE
+from rag.bm25 import PARAMS_FILE as BM25_FILE
+from rag.catalog import CATALOG_FILE
 from tests.helpers.pinecone import FakeInference, FakePineconeClient
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "sample_docs"

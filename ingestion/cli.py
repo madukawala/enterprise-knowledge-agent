@@ -17,13 +17,13 @@ from core.config import LogFormat, Settings, get_settings
 from core.logging import configure_logging, get_logger
 from ingestion.loader import CorpusError
 from ingestion.pipeline import (
-    BM25_FILE,
-    CATALOG_FILE,
     IngestReport,
     PreparedCorpus,
     prepare_corpus,
     run_ingestion,
 )
+from rag.bm25 import PARAMS_FILE as BM25_FILE
+from rag.catalog import CATALOG_FILE
 from rag.embeddings import PineconeEmbedder
 from rag.schema import Collection
 from rag.vector_store import IndexConfigError, PineconeHybridStore

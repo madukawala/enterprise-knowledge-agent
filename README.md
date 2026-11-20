@@ -13,9 +13,10 @@ The project is built step by step, one feature branch at a time, following the p
 - the architecture and design;
 - the project scaffold: settings, structured logging, error handling, a minimal API, the test harness and CI;
 - the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana;
-- the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection.
+- the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection;
+- hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`.
 
-Search, the chat UI, the agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the checks.
+The agents, the chat UI, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API, search from the terminal and run the checks.
 
 ## Contents
 
@@ -136,7 +137,7 @@ enterprise-knowledge-agent/
   api/            FastAPI app: routes, middleware, error handling, SSE streaming
   core/           Shared settings, structured logging and error types
   agents/         LangGraph graph, supervisor and specialist agents, shared state
-  rag/            Search building blocks: chunk schema, BM25 encoder, embeddings, Pinecone index
+  rag/            Search: chunk schema, BM25, embeddings, Pinecone index, filters, hybrid retrieval
   security/       Role matrix, authentication, guardrails, rate limiting
   ingestion/      Document parsing, chunking and indexing into Pinecone
   mcp_server/     MCP server with dummy enterprise data
@@ -144,7 +145,7 @@ enterprise-knowledge-agent/
   ui/             Streamlit app and agent activity panel
   prompts/        Prompt templates, kept out of the code
   data/           Sample Helix Bank documents (data/sample_docs) and ingestion output (data/index, not committed)
-  evals/          Evaluation datasets
+  evals/          Evaluation question sets and runners (retrieval hit rate and MRR)
   tests/          Unit, integration, graph, security, resilience and end-to-end tests
   docs/           Architecture diagrams, decision records, assumptions, threat model, testing
   infra/          Config for the Docker services: Keycloak realm, Postgres init, Prometheus, Grafana
@@ -153,12 +154,12 @@ enterprise-knowledge-agent/
   compose.yaml    The full local stack; compose.dev.yaml adds live code reload
 ```
 
-Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `data/`, `ui/` (empty package), `infra/` and `tests/` exist. The `rag/`, `ingestion/` and `data/` folders each have a README explaining how they work.
+Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `data/`, `evals/`, `ui/` (empty package), `infra/` and `tests/` exist. The `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work.
 
 The code is one Python project with one `pyproject.toml` and one lock file, with two deliberate boundaries:
 
 - The sandbox has its own small dependency file (`sandbox/requirements.txt`), so its image contains only data-analysis libraries, with no project code and no secrets.
-- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). Two more contracts keep `core/` at the bottom layer, and keep `ingestion/` (an offline job) out of the running services.
+- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). Three more contracts keep `core/` at the bottom layer, and keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services.
 
 ## Getting started
 
@@ -208,6 +209,12 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
    ```
 
    The first run creates the `helix-knowledge` index (hybrid, `dotproduct`, 1024 dimensions). You can run it again at any time: it overwrites the same records, removes records of deleted documents, and never creates duplicates. See [ingestion/README.md](ingestion/README.md).
+
+   Then try a search. Each role sees only the documents it may read:
+
+   ```bash
+   make search Q="why do card payments fail?" ROLE=analyst
+   ```
 
 5. Open the app at <http://localhost:8501> and log in with one of the test users below. Use a different user to try each role.
 
@@ -283,6 +290,8 @@ Run `make` on its own to list every task. The main ones:
 | `make compose-check` | Check the Compose files without starting anything |
 | `make scan-image` | Scan the API image with Trivy |
 | `make ingest-check` / `make ingest` | Check the sample documents, or load them into Pinecone |
+| `make search Q="..." ROLE=analyst` | Search the index as a role and print the ranked, cited chunks |
+| `make eval-retrieval` | Hit rate and MRR for several alpha values, saved to `docs/evals/retrieval.md` |
 
 The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API image.
 
@@ -304,6 +313,7 @@ make test            # unit, integration, graph, security and resilience tests, 
 make test-unit       # fast unit tests only
 make test-security   # security tests only
 make test-live       # tests that call the real cloud services (uses your API keys)
+make test-pinecone-local  # search tests against Pinecone's emulator in Docker (no account needed)
 ```
 
 `make eval` (answer-quality evaluations), `make e2e` (browser tests against the running stack) and `make load` are added with `feature/observability-evals`.
@@ -319,6 +329,7 @@ The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 | [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) | Assumptions and trade-offs |
 | [docs/security/THREAT_MODEL.md](docs/security/THREAT_MODEL.md) | Threats, the controls against them and the tests that prove them |
 | [docs/TESTING.md](docs/TESTING.md) | Testing strategy, test layers and CI checks |
+| [docs/evals](docs/evals/README.md) | Evaluation results, starting with retrieval |
 
 ## Roadmap
 

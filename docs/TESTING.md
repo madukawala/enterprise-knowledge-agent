@@ -32,7 +32,10 @@ tests/
   helpers/
     llm.py               # fake chat model that returns scripted replies
     tokens.py            # Keycloak-style JWTs signed with a test key, plus the matching JWKS
-    pinecone.py          # in-memory Pinecone: fake embeddings, index and store
+    pinecone.py          # in-memory Pinecone: embeddings, re-ranker, store, and an async index
+                         #   that really scores records and applies metadata filters
+    search.py            # builders for search tests: chunks, records, a ready retriever,
+                         #   and the fixture documents ingested into the in-memory index
   unit/
   integration/
   security/
@@ -41,9 +44,10 @@ tests/
   e2e/                   # added with feature/observability-evals
   live/                  # opt-in tests against real cloud services (`make test-live`)
   fixtures/
-    sample_docs/         # three tiny documents for the ingestion tests (a poisoned one comes with guardrails)
+    sample_docs/         # three tiny documents (internal, confidential, restricted) for the
+                         #   ingestion and search tests (a poisoned one comes with guardrails)
 evals/
-  datasets/              # golden questions with expected sources; added with feature/observability-evals
+  datasets/retrieval.yaml  # 18 questions with the documents that answer them (hit rate, MRR)
 ```
 
 Test data in `tests/fixtures/` is separate from the demo corpus, so changing demo documents never breaks tests. The attack dataset `tests/security/attacks.yaml` arrives with `feature/guardrails`.
@@ -87,16 +91,23 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 | `make test-unit` | fast unit tests only |
 | `make test-security` | security suite |
 | `make test-live` | tests that call real LLMs, Pinecone and LangSmith |
+| `make test-pinecone-local` | the search tests in `tests/integration/test_pinecone_local.py` against Pinecone's emulator, started in Docker; no account needed |
+| `make eval-retrieval` | retrieval hit rate, MRR and recall for several alpha values against the real index; writes `docs/evals/retrieval.md` |
 | `make eval` | Ragas and LangSmith evaluations; writes results to `docs/evals/` (from `feature/observability-evals`) |
 | `make e2e` | Playwright smoke tests against the running stack (from `feature/observability-evals`) |
 | `make load` | Locust load test (from `feature/observability-evals`) |
 | `make compose-check` | Checks the Compose files without starting anything |
 | `make scan-image` | Builds the API image and scans it with Trivy, using the CI rules |
 
-- **Coverage:** `pytest-cov`, minimum **80%** with branch coverage on the core packages (`api/`, `core/`, `security/` today, then `agents/` and `rag/` as they are added; the list is in `[tool.coverage.run]` in `pyproject.toml`). The UI is covered by the end-to-end smoke tests.
+- **Coverage:** `pytest-cov`, minimum **80%** with branch coverage on the core packages (`api/`, `core/`, `security/`, `rag/`, `ingestion/` and `evals/` today, then `agents/` and the rest as they are added; the list is in `[tool.coverage.run]` in `pyproject.toml`). The UI is covered by the end-to-end smoke tests.
 - **Static checks:** `ruff` (lint and format), `mypy --strict` on the application packages, and `import-linter` for package boundaries.
 - **pre-commit:** ruff, mypy, the import boundary check, gitleaks, and end-of-file, whitespace, YAML and TOML checks.
 - **CI (`.github/workflows/ci.yml`):** lint → type check → import boundary check (the UI must not import backend code) → tests with coverage → `bandit` → `pip-audit` → `gitleaks`. A separate job checks the Compose files, builds the API image and scans it with Trivy: it fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. The result shows as a badge in the README. `make check` runs the same checks locally, except gitleaks and Trivy; `make compose-check` and `make scan-image` cover those two Docker steps.
+- **Pinecone Local:** the tests in `test_pinecone_local.py` skip unless `PINECONE_LOCAL_HOST` is set, so they run through `make test-pinecone-local`, not in CI. They check the permission, department and date filters in the real filter syntax, the async client, metadata round trips and re-running ingestion. Two limits of the emulator (v0.7.0, and the v1.0.0 release candidate too):
+  - it only speaks the older control-plane API, so the test creates its index with plain HTTP and uses the SDK only for data;
+  - it ignores the sparse part of a query, so the hybrid score is checked by the property test and by a live test against real Pinecone instead.
+
+  The rest of the search code is covered in CI by the in-memory index in `tests/helpers/pinecone.py`. Adding the emulator to CI as a service container is a small follow-up.
 - **Stack smoke check:** `make up` starts the Compose stack and waits until every health check passes. The API's health check calls `/readyz`, which only passes when Postgres and Redis answer, so a green `make up` means the services can reach each other.
 
 ## Definition of done for every branch
@@ -113,7 +124,7 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 | `feature/project-scaffold` | Test harness, markers, fixtures, CI and coverage gate |
 | `feature/docker-infra` | Readiness logic (ready, degraded, not ready, timeouts) with fake checks; probe failures against closed ports; `/readyz` returns 503 without leaking connection details; `/metrics` counts requests but not health probes; Compose check, healthy start order and Trivy |
 | `feature/sample-data-ingestion` | Front-matter checks (every rule, all problems reported at once); section-aware chunking with property tests (no words lost, chunks under the token limit); BM25 maths and save/load; stable IDs; re-running changes nothing; stale records removed; nothing saved when Pinecone fails; YAML code tags, symlinks and missing access levels refused; the API key never printed; the demo corpus keeps its promised shape (`test_sample_corpus.py`); one live embedding call |
-| `feature/hybrid-retrieval` | Score weighting, metadata and permission filters, Pinecone Local, first hit rate and MRR |
+| `feature/hybrid-retrieval` | The score merge as a property test (one dot product equals `alpha × dense + (1 − alpha) × BM25`); every filter and both ends of a date range; no optional filter can widen access (property test); each role sees only its levels, even when the filter is broken on purpose; parallel queries, a failing or slow collection gives a partial result, all failing gives a clear error, cancellation stops every query; re-ranker order used, and its failure keeps the hybrid order; the question never logged; hit rate, MRR and recall maths; the question set stays true to the documents; filters, metadata and re-ingestion against Pinecone Local (opt-in); live searches, including the hybrid score checked against real Pinecone |
 | `feature/langgraph-agents` | Routing and failure containment with fake LLMs |
 | `feature/streaming-api` | SSE event order, client disconnect and cancellation |
 | `feature/streamlit-ui` | Event rendering helpers; e2e smoke test later |

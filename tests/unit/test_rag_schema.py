@@ -57,3 +57,27 @@ def test_optional_fields_are_kept_when_set() -> None:
     flat = metadata(severity="SEV1", tags=("payhub", "pool")).to_pinecone()
     assert flat["severity"] == "SEV1"
     assert flat["tags"] == ["payhub", "pool"]
+
+
+def test_metadata_read_back_from_pinecone_matches_what_was_written() -> None:
+    chunk = ChunkMetadata(
+        doc_id="INC-2026-003",
+        title="Salary-day failures",
+        section="Root cause",
+        department=Department.PAYMENTS,
+        document_type=DocumentType.INCIDENT,
+        access_level=AccessLevel.CONFIDENTIAL,
+        created_date=date(2026, 1, 30),
+        source_path="data/sample_docs/incidents/INC-2026-003.md",
+        chunk_index=2,
+        text="text",
+        severity="SEV1",
+        tags=("payhub",),
+    )
+    # Pinecone gives numbers back as floats.
+    returned = {
+        key: float(value) if isinstance(value, int) else value
+        for key, value in chunk.to_pinecone().items()
+    }
+
+    assert ChunkMetadata.from_pinecone(returned) == chunk

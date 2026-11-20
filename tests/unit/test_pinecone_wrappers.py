@@ -6,9 +6,15 @@ from typing import Any
 import pytest
 
 from rag.bm25 import SparseVector
-from rag.embeddings import MAX_BATCH_SIZE, PineconeEmbedder
+from rag.embeddings import MAX_BATCH_SIZE, PineconeEmbedder, QueryEmbedder
+from rag.reranker import PineconeReranker
 from rag.vector_store import IndexConfigError, PineconeHybridStore, VectorRecord
-from tests.helpers.pinecone import FakeIndex, FakeInference, FakePineconeClient
+from tests.helpers.pinecone import (
+    FakeAsyncInference,
+    FakeIndex,
+    FakeInference,
+    FakePineconeClient,
+)
 
 
 def store(client: FakePineconeClient) -> PineconeHybridStore:
@@ -135,3 +141,78 @@ def test_delete_ids_removes_records_in_batches() -> None:
     hybrid.delete_ids("runbooks", {"D-1#1", "D-1#2"})
     assert hybrid.list_ids("runbooks") == {"D-1#0"}
     assert client.index.delete_calls == 1
+
+
+# ---------------------------------------------------------------
+# Search side: question embeddings and the re-ranker
+# ---------------------------------------------------------------
+
+
+async def test_questions_are_embedded_as_queries() -> None:
+    inference = FakeAsyncInference(dimension=8)
+    embedder = QueryEmbedder(inference, model="m", dimension=8)
+
+    vector = await embedder.embed_query("why do card payments fail?")
+
+    assert len(vector) == 8
+    assert inference.embed_calls[0]["parameters"] == {"input_type": "query", "truncate": "END"}
+
+
+async def test_a_repeated_question_is_not_embedded_twice() -> None:
+    inference = FakeAsyncInference(dimension=8)
+    embedder = QueryEmbedder(inference, model="m", dimension=8, cache_size=2)
+
+    first = await embedder.embed_query("a")
+    first.append(99.0)  # changing the returned list must not change the cache
+    await embedder.embed_query("b")
+    again = await embedder.embed_query("a")
+    await embedder.embed_query("c")  # pushes out "b", the least recently used
+    await embedder.embed_query("b")
+
+    assert len(again) == 8
+    assert [call["inputs"] for call in inference.embed_calls] == [["a"], ["b"], ["c"], ["b"]]
+
+
+async def test_a_query_vector_of_the_wrong_size_is_refused() -> None:
+    embedder = QueryEmbedder(FakeAsyncInference(dimension=4), model="m", dimension=8)
+    with pytest.raises(ValueError, match="EMBEDDING_DIMENSION"):
+        await embedder.embed_query("q")
+
+
+async def test_reranker_returns_positions_and_scores_best_first() -> None:
+    inference = FakeAsyncInference()
+    reranker = PineconeReranker(inference, model="bge-reranker-v2-m3")
+
+    ranked = await reranker.rerank("card certificate", ["payhub", "card certificate"], top_n=5)
+
+    assert ranked == [(1, 2.0), (0, 0.0)]
+    assert inference.rerank_calls[0]["top_n"] == 2
+
+
+async def test_reranker_answer_outside_the_list_is_refused() -> None:
+    class BrokenInference(FakeAsyncInference):
+        async def rerank(self, *args: Any, **kwargs: Any) -> SimpleNamespace:
+            return SimpleNamespace(data=[SimpleNamespace(index=7, score=1.0)])
+
+    with pytest.raises(ValueError, match="outside"):
+        await PineconeReranker(BrokenInference(), model="m").rerank("q", ["a"], top_n=1)
+
+
+def test_store_passes_an_explicit_index_host_to_the_client() -> None:
+    class RecordingClient(FakePineconeClient):
+        hosts: list[str] = []  # noqa: RUF012 - test-only class attribute
+
+        def Index(self, name: str, host: str = "") -> FakeIndex:  # noqa: N802
+            RecordingClient.hosts.append(host)
+            return self.index
+
+    hybrid = PineconeHybridStore(
+        RecordingClient(),  # type: ignore[arg-type]
+        index_name="i",
+        dimension=4,
+        cloud="aws",
+        region="us-east-1",
+        index_host="http://localhost:5081",
+    )
+    hybrid.upsert("runbooks", [record("RB-1#0")])
+    assert RecordingClient.hosts == ["http://localhost:5081"]

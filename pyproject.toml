@@ -97,7 +97,7 @@ select = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["api", "core", "security", "rag", "ingestion", "ui"]
+files = ["api", "core", "security", "rag", "ingestion", "evals", "ui"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -109,25 +109,31 @@ warn_required_dynamic_aliases = true
 # Import boundaries (checked in CI with `lint-imports`)
 # ---------------------------------------------------------------
 [tool.importlinter]
-root_packages = ["api", "core", "security", "rag", "ingestion", "ui"]
+root_packages = ["api", "core", "security", "rag", "ingestion", "evals", "ui"]
 
 [[tool.importlinter.contracts]]
 name = "The UI talks to the API over HTTP only and never imports backend code"
 type = "forbidden"
 source_modules = ["ui"]
-forbidden_modules = ["api", "core", "security", "rag", "ingestion"]
+forbidden_modules = ["api", "core", "security", "rag", "ingestion", "evals"]
 
 [[tool.importlinter.contracts]]
 name = "Core is the bottom layer and does not depend on other packages"
 type = "forbidden"
 source_modules = ["core"]
-forbidden_modules = ["api", "security", "rag", "ingestion", "ui"]
+forbidden_modules = ["api", "security", "rag", "ingestion", "evals", "ui"]
 
 [[tool.importlinter.contracts]]
 name = "Ingestion is an offline job: the running services never import it"
 type = "forbidden"
 source_modules = ["api", "rag", "security"]
 forbidden_modules = ["ingestion"]
+
+[[tool.importlinter.contracts]]
+name = "Evaluations are run by hand: nothing else imports them"
+type = "forbidden"
+source_modules = ["api", "rag", "security", "ingestion"]
+forbidden_modules = ["evals"]
 
 # ---------------------------------------------------------------
 # pytest and coverage
@@ -155,7 +161,7 @@ markers = [
 [tool.coverage.run]
 branch = true
 # Extended with each core package as it is added (agents, rag, ...).
-source = ["api", "core", "security", "rag", "ingestion"]
+source = ["api", "core", "security", "rag", "ingestion", "evals"]
 
 [tool.coverage.report]
 fail_under = 80

@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
 
     # --- Pinecone and the document index (ADR-0003, ADR-0004, ADR-0005) ---
-    # Needed by `make ingest` and, later, by document search. Without a key,
+    # Needed by `make ingest` and by document search. Without a key,
     # `make ingest-check` still reads and chunks the documents.
     pinecone_api_key: SecretStr | None = None
     pinecone_index_name: str = Field(
@@ -82,6 +82,26 @@ class Settings(BaseSettings):
     # BM25 parameters and the document catalog (git-ignored, rebuilt by ingest).
     sample_docs_dir: Path = Path("data/sample_docs")
     index_artifacts_dir: Path = Path("data/index")
+
+    # --- Hybrid search (ADR-0003, ADR-0010) ---
+    # score = alpha x dense score + (1 - alpha) x BM25 score.
+    # 1.0 is meaning only. It must stay above 0: at 0 the dense query vector
+    # would be all zeros, which Pinecone does not accept.
+    hybrid_alpha: float = Field(default=0.5, gt=0, le=1)
+    # How many chunks a search returns, after merging and re-ranking.
+    retrieval_top_k: int = Field(default=8, ge=1, le=20)
+    # How many matches to ask each collection for before merging.
+    retrieval_candidates_per_collection: int = Field(default=20, ge=1, le=100)
+    # Stops one long document from filling every result slot.
+    retrieval_max_chunks_per_document: int = Field(default=3, ge=1, le=20)
+    # Time limit for each call to Pinecone during a search (embed, query, re-rank).
+    retrieval_timeout_seconds: float = Field(default=8.0, gt=0, le=60)
+    # Pinecone-hosted re-ranker. If it fails or the free quota runs out, the
+    # search keeps the hybrid order instead of failing.
+    rerank_enabled: bool = True
+    rerank_model: str = "bge-reranker-v2-m3"
+    # How many merged candidates are sent to the re-ranker.
+    rerank_candidates: int = Field(default=30, ge=1, le=100)
 
     @property
     def is_production(self) -> bool:

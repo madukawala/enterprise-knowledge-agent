@@ -19,6 +19,8 @@ from rag.schema import Collection, Department
 from security.roles import AccessLevel
 
 FORMAT_VERSION = 1
+# Saved by ingestion in INDEX_ARTIFACTS_DIR, next to the BM25 parameters.
+CATALOG_FILE = "catalog.json"
 
 
 class LevelSummary(BaseModel):

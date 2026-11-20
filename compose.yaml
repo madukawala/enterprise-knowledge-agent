@@ -1,7 +1,8 @@
 # The full local stack. Start it with `make up` (or `docker compose up -d --build --wait`).
 #
 # Services in this file today: api, postgres, redis, keycloak, and the
-# optional prometheus + grafana (profile "observability"). The UI, MCP server
+# optional prometheus + grafana (profile "observability") and the Pinecone
+# emulator used by tests (profile "pinecone-local"). The UI, MCP server
 # and Python sandbox are added by their own feature branches.
 #
 # Layout (ADR-0009):
@@ -226,6 +227,28 @@ services:
       resources:
         limits:
           memory: 256m
+
+  # ---------------------------------------------------------------
+  # Optional, for tests only: Pinecone's emulator.
+  # Started by `make test-pinecone-local`; never used by the app itself.
+  # It keeps everything in memory, so it has no volume and no API key.
+  # ---------------------------------------------------------------
+  pinecone-local:
+    <<: *hardening
+    image: ghcr.io/pinecone-io/pinecone-local:v0.7.0
+    profiles: [pinecone-local]
+    environment:
+      PORT: "5080"
+      PINECONE_HOST: localhost
+    # 5080 is the control plane (create and describe indexes). Each index
+    # gets the next free port, starting at 5081.
+    ports:
+      - "127.0.0.1:5080-5090:5080-5090"
+    networks: [frontend]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
 networks:
   frontend: {}

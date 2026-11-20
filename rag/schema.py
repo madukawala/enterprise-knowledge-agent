@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime, time
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -130,3 +130,15 @@ class ChunkMetadata(BaseModel):
         if self.tags:
             metadata["tags"] = list(self.tags)
         return metadata
+
+    @classmethod
+    def from_pinecone(cls, metadata: Mapping[str, Any]) -> "ChunkMetadata":
+        """Read the metadata of a search match back into this model.
+
+        `created_ts` is dropped because it is worked out from `created_date`.
+        Pinecone returns every number as a float (3.0), which the int fields
+        accept. Raises `ValidationError` if a field is missing or wrong, for
+        example a record written by an older version of ingestion.
+        """
+        fields = {key: value for key, value in metadata.items() if key != "created_ts"}
+        return cls.model_validate(fields)

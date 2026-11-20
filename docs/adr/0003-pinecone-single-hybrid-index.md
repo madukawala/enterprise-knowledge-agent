@@ -28,6 +28,14 @@ The assignment requires hybrid search (dense semantic search plus sparse BM25 ke
 - **Negative:** dense and sparse scores have different scales, so `alpha` has to be tuned rather than assumed. The evaluation set makes this measurable.
 - **Negative:** the BM25 vocabulary is fixed when the encoder is fitted. New documents need a re-fit and re-index (`make ingest`, an Admin tool).
 
+## Update during implementation
+
+- `alpha` must be greater than 0 and at most 1. At 0 the dense query vector would be all zeros, which Pinecone does not accept, so pure keyword search is not offered.
+- When `alpha` is 1, or the question has only stop words, no sparse vector is sent: Pinecone rejects an empty one, and it would add nothing.
+- Scores from different namespaces are merged directly, which is valid because every namespace shares one index, one embedding model, one BM25 encoder and the same `alpha`.
+- A property test checks that one dot product with the scaled vectors equals `alpha × dense + (1 − alpha) × BM25`, and a live test checks the same against real Pinecone, using the stored vectors it returns. (Pinecone Local ignores the sparse part of a query, so the emulator cannot check this.) The code is [rag/hybrid.py](../../rag/hybrid.py) and [rag/retrieval.py](../../rag/retrieval.py).
+- The tuning tool is `make eval-retrieval`, which compares several `alpha` values on 18 questions with known answers ([evals/README.md](../../evals/README.md)).
+
 ## Alternatives considered
 
 | Option | Why not |
