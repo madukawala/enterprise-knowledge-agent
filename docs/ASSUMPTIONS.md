@@ -68,6 +68,16 @@ Where the assignment leaves something open, this file records the choice made an
 | AG5 | Conversations are kept in memory for the life of the process until `feature/memory` adds the Postgres checkpointer. | Lets follow-ups work now, with no schema to migrate later. |
 | AG6 | "The last year" and similar phrases are resolved against the server's date, which is given to the model in the prompt. | Date filters need real dates; the model has no clock. |
 
+## Chat stream
+
+| # | Assumption | Reason |
+|---|---|---|
+| ST1 | Streamed tokens are a preview. The final answer is the `response_end` event, and a `response_start` tells the client to clear the text (a rewrite, or a model failing half-way). | The validator checks the whole answer, so it can only approve it at the end. Holding every token until then would make the user wait 10 to 40 seconds for the first word ([ADR-0013](adr/0013-streaming-with-server-sent-events.md)). |
+| ST2 | Until login exists (`feature/auth-rbac`), the role comes from an `X-Dev-Role` header (default `viewer`), refused when `APP_ENV=production`. Conversations belong to a role until then, and to a user after. | The streaming API and the UI can be built and tested before Keycloak is wired in, without ever accepting a role from the request body. |
+| ST3 | One whole answer may take at most 120 seconds (`CHAT_TIMEOUT_SECONDS`); a keep-alive line is sent after 15 quiet seconds. | A normal question takes 10 to 40 seconds on the free tiers, with a 30-second limit per model call. Anything slower is stuck. |
+| ST4 | A conversation answers one question at a time; a second one gets 409. | Two runs writing to one conversation would mix up its history. The chat UI (`feature/streamlit-ui`) will disable the input while an answer streams. |
+| ST5 | When the client disconnects, the run is cancelled at once, even mid-answer. Nothing is saved for the half-finished question. | No quota is spent on answers nobody reads. Resuming abandoned answers is not in scope. |
+
 ## Memory
 
 | # | Assumption | Reason |
@@ -107,3 +117,5 @@ Where the assignment leaves something open, this file records the choice made an
 | Small RLM plan language | Safe, testable | Less flexible plans |
 | Routing after each agent in code, not by the model | Predictable, testable, three model calls per question | The supervisor cannot improvise a new route; new routes are added in code |
 | Validator regenerates once | Bounded latency and cost | Some answers end with a safe fallback message instead of a retry loop |
+| SSE vs WebSockets for the chat stream | Plain HTTP, works with `curl` and any proxy; disconnects handled by Starlette | One-way only: approvals and feedback are separate requests ([ADR-0013](adr/0013-streaming-with-server-sent-events.md)) |
+| Streaming tokens before the answer is validated | The first words appear in seconds | The preview can change after a rewrite; the client must follow the `response_start` rule |

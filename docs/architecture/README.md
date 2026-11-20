@@ -23,7 +23,7 @@ The reasons behind the design are recorded in [docs/adr](../adr/README.md).
 | 6 | [Layered security](06-security-layers.drawio.svg) | draw.io | The checks on every request and every answer, plus controls that apply everywhere |
 | 7 | [Failure handling](07-failure-handling.drawio.svg) | draw.io | Switching to the backup language model, the circuit breaker, and what happens when other services fail |
 | 8 | [Memory](08-memory.md) | Mermaid | Conversation memory, summaries, long-term memory per user, and the rules that protect it |
-| 9 | [Streaming events](09-streaming-events.md) | Mermaid | The live events sent from the backend to the activity panel |
+| 9 | [Streaming events](09-streaming-events.md) | Mermaid | The live events `POST /chat` sends to the activity panel, their order, and the rules for clients (built) |
 | 10 | [Request lifecycle](10-request-lifecycle.md) | Mermaid | One request from login to the final answer |
 | - | [Test pyramid](test-pyramid.drawio.svg) | draw.io | The test layers, used in [TESTING.md](../TESTING.md) |
 

@@ -49,6 +49,12 @@ class InvalidRequestError(AppError):
     default_message = "The request is not valid."
 
 
+class ConflictError(AppError):
+    status_code = 409
+    code = "conflict"
+    default_message = "The request conflicts with one that is still running."
+
+
 class RateLimitError(AppError):
     status_code = 429
     code = "rate_limited"

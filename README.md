@@ -15,9 +15,10 @@ The project is built step by step, one feature branch at a time, following the p
 - the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana;
 - the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection;
 - hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`;
-- the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Gemini with OpenRouter as the fallback, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`.
+- the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Gemini with OpenRouter as the fallback, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`;
+- the streaming chat API: `POST /chat` streams the answer token by token, together with live events for the activity panel (each agent starting and finishing, the plan, the search, the checks, anything degraded). A client that disconnects stops the run, every run has a time limit, and conversations continue with follow-up questions. Watch it with `make stream`.
 
-The streaming chat API, the chat UI, the research and tool agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API, ask the agents from the terminal and run the checks.
+The chat UI, login, the research and tool agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API, ask the agents from the terminal and run the checks.
 
 ## Contents
 
@@ -66,7 +67,7 @@ More diagrams, all in [docs/architecture](docs/architecture/README.md):
 | [Layered security](docs/architecture/06-security-layers.drawio.svg) | Every check a request and an answer pass through |
 | [Failure handling](docs/architecture/07-failure-handling.drawio.svg) | Language model failover and reduced modes for other services |
 | [Memory](docs/architecture/08-memory.md) | Conversation memory, summaries and long-term memory per user |
-| [Streaming events](docs/architecture/09-streaming-events.md) | The live events the activity panel receives |
+| [Streaming events](docs/architecture/09-streaming-events.md) | The live events `POST /chat` sends to the activity panel, and the rules for clients |
 | [Request lifecycle](docs/architecture/10-request-lifecycle.md) | One request from login to the final answer |
 
 ### Main components
@@ -281,7 +282,13 @@ make install     # install all dependencies and the pre-commit hooks
 make run-api     # start only the API on http://localhost:8000 with auto-reload
 ```
 
-Open <http://localhost:8000/healthz> to check it is running, or <http://localhost:8000/docs> for the interactive API docs. Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
+Open <http://localhost:8000/healthz> to check it is running, or <http://localhost:8000/docs> for the interactive API docs. With a model key in `.env`, ask a question and watch the events stream back:
+
+```bash
+make stream Q="The PayHub database connection pool is exhausted. What should I do?" ROLE=analyst
+```
+
+Until login is added (`feature/auth-rbac`), the role is taken from the `X-Dev-Role` header, which a production API refuses. The endpoint is described in [api/README.md](api/README.md). Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
 
 To work inside the Docker stack instead, run `make up-dev`. The API container then runs the code from your machine and reloads when you save a file. A rebuild is only needed after you add a dependency.
 
@@ -303,6 +310,7 @@ Run `make` on its own to list every task. The main ones:
 | `make search Q="..." ROLE=analyst` | Search the index as a role and print the ranked, cited chunks |
 | `make eval-retrieval` | Hit rate and MRR for several alpha values, saved to `docs/evals/retrieval.md` |
 | `make ask Q="..." ROLE=analyst` / `make chat` | Ask the agents one question, or have a conversation, in the terminal |
+| `make stream Q="..." ROLE=analyst` | Ask the running API and print the streamed events, as the UI receives them |
 | `make diagrams` | Redraw the agent graph from the code (`docs/architecture/03-agent-graph.generated.md`) |
 
 The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API image.

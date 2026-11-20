@@ -13,24 +13,41 @@
   A scripted `Exception` is raised instead of answering, and `delay` makes
   every call slow, for timeout tests. `calls` records what was sent.
 
+  It also streams, like the real models do when LangGraph asks for tokens:
+  a text reply arrives word by word (`token_delay` apart). A reply such as
+  `PartialFailure("Half an ans", RuntimeError())` streams some words and
+  then fails, to test a model breaking in the middle of an answer.
+
 This keeps tests free, fast and the same on every run.
 """
 
 import asyncio
-from collections.abc import Callable, Iterable, Sequence
+import json
+import re
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field
 
-Reply = str | dict[str, Any] | BaseModel | Exception
+
+@dataclass(frozen=True)
+class PartialFailure:
+    """Stream `text`, then raise `error` (only when streamed)."""
+
+    text: str
+    error: Exception
+
+
+Reply = str | dict[str, Any] | BaseModel | Exception | PartialFailure
 
 USAGE = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
 
@@ -45,6 +62,7 @@ class ScriptedChatModel(BaseChatModel):
     structured: dict[str, list[Reply]] = Field(default_factory=dict)
     texts: list[Reply] = Field(default_factory=list)
     delay: float = 0.0
+    token_delay: float = 0.0
     calls: list[tuple[str, list[BaseMessage]]] = Field(default_factory=list)
 
     @property
@@ -79,8 +97,53 @@ class ScriptedChatModel(BaseChatModel):
             )
         else:
             reply = self._next(self.texts, "text", messages)
+            if isinstance(reply, PartialFailure):
+                raise reply.error
             message = AIMessage(str(reply), usage_metadata=USAGE)  # type: ignore[arg-type]
         return ChatResult(generations=[ChatGeneration(message=message)])
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if kwargs.get("tools"):
+            # Structured output arrives as one tool-call chunk.
+            message = self._generate(messages, stop, **kwargs).generations[0].message
+            assert isinstance(message, AIMessage)
+            call = message.tool_calls[0]
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    "",
+                    tool_call_chunks=[
+                        {
+                            "name": call["name"],
+                            "args": json.dumps(call["args"]),
+                            "id": call["id"],
+                            "index": 0,
+                            "type": "tool_call_chunk",
+                        }
+                    ],
+                    usage_metadata=USAGE,  # type: ignore[arg-type]
+                )
+            )
+            return
+        reply = self._next(self.texts, "text", messages)
+        text = reply.text if isinstance(reply, PartialFailure) else str(reply)
+        for word in re.findall(r"\S+\s*|\s+", text):
+            if self.token_delay:
+                await asyncio.sleep(self.token_delay)
+            chunk = ChatGenerationChunk(message=AIMessageChunk(word))
+            if run_manager:
+                await run_manager.on_llm_new_token(word, chunk=chunk)
+            yield chunk
+        if isinstance(reply, PartialFailure):
+            raise reply.error
+        yield ChatGenerationChunk(message=AIMessageChunk("", usage_metadata=USAGE))  # type: ignore[arg-type]
 
     async def _agenerate(
         self,

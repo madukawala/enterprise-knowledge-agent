@@ -100,3 +100,12 @@ compose.override.yaml
 # Trivy output when the scan is run by hand
 trivy-results.*
 .trivycache/
+
+# ---------------------------------------------------------------
+# API testing by hand
+# ---------------------------------------------------------------
+# Browser network captures (HAR) and HTTP-client secret files hold
+# request headers and tokens, so they stay on your machine.
+*.har
+http-client.private.env.json
+*.private.env.json

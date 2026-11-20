@@ -183,28 +183,23 @@ def test_the_cli_needs_a_question_or_chat(tmp_path: Path) -> None:
 def test_tracing_is_off_without_a_key(tmp_path: Path) -> None:
     assert not Tracing(_settings(tmp_path)).enabled
     assert not Tracing(_settings(tmp_path, langsmith_tracing=True)).enabled
-    with Tracing(_settings(tmp_path)).run(tags=["x"]):
-        pass
+    assert Tracing(_settings(tmp_path)).callbacks(tags=["x"]) == []
 
 
 async def test_traced_runs_carry_the_role_and_request_labels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With tracing on, runs go to our project with our tags, through our client."""
-    from langchain_core.tracers.context import tracing_v2_callback_var
-
-    seen: list[object] = []
-
-    class RecordingTracing(Tracing):
-        def run(self, *, tags):  # type: ignore[no-untyped-def]
-            seen.append(tags)
-            return super().run(tags=tags)
+    from langchain_core.tracers.langchain import LangChainTracer
 
     settings = _settings(
         tmp_path, langsmith_tracing=True, langsmith_api_key=SecretStr("lsv2_test-key")
     )
-    tracing = RecordingTracing(settings)
+    tracing = Tracing(settings)
     assert tracing.enabled
+    (tracer,) = tracing.callbacks(tags=["probe"])
+    assert isinstance(tracer, LangChainTracer)
+    assert tracer.project_name == "helix-knowledge-agent"
 
     # Record runs instead of sending them over the network.
     created: list[dict[str, object]] = []
@@ -215,20 +210,17 @@ async def test_traced_runs_carry_the_role_and_request_labels(
 
     agents = agent_service(_scripted("Renew it [1]."), FakeSearcher([result_with(hit("RB-1"))]))
     agents.tracing = tracing
-    with tracing.run(tags=["probe"]):
-        tracer = tracing_v2_callback_var.get()
     run = await agents.ask("Why?", role=Role.VIEWER, request_id="req-123")
 
-    assert tracer is not None
-    assert tracer.project_name == "helix-knowledge-agent"
-    assert seen[-1] == ["helix-agent", "role:viewer"]
     assert run.request_id == "req-123"
     graph_run = next(r for r in created if r.get("name") == "helix_agent")
+    # The trace ID is the run ID we chose, so the UI can link to it.
+    assert str(graph_run["id"]) == run.run_id
     assert graph_run["session_name"] == "helix-knowledge-agent"
     metadata = graph_run["extra"]["metadata"]  # type: ignore[index]
     assert metadata["request_id"] == "req-123"
     assert metadata["role"] == "viewer"
-    assert "role:viewer" in graph_run["tags"]  # type: ignore[operator]
+    assert {"helix-agent", "role:viewer"} <= set(graph_run["tags"])  # type: ignore[arg-type]
     tracing.flush()
 
 

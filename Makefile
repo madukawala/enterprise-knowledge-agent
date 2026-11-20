@@ -5,7 +5,7 @@
 .PHONY: help install lint format typecheck imports test test-unit test-security test-live \
         audit check run-api clean env-file up up-dev up-observability down down-volumes \
         ps logs compose-check scan-image ingest ingest-check search eval-retrieval \
-        test-pinecone-local ask chat diagrams
+        test-pinecone-local ask chat diagrams stream
 
 UV_RUN := uv run
 # Exported from uv.lock for pip-audit. Kept in .cache/, which git ignores.
@@ -137,6 +137,19 @@ diagrams: ## Draw the agent graph from the code into docs/architecture/03-agent-
 
 run-api: ## Start only the API on http://localhost:8000 with auto-reload (no Docker)
 	$(UV_RUN) uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+
+# Example: make stream Q="Why did card payments fail in March?" ROLE=analyst
+# Needs the API running (make run-api or make up). Prints the raw server-sent
+# events, as the UI receives them. The question is turned into JSON by
+# Python, so quotes in it cannot break the request.
+API_URL ?= http://localhost:8000
+stream: export Q := $(Q)
+stream: export ROLE := $(ROLE)
+stream: ## Watch an answer stream from the running API: make stream Q="your question" ROLE=analyst
+	@test -n "$$Q" || { echo 'Usage: make stream Q="your question" [ROLE=viewer|analyst|admin]'; exit 1; }
+	@$(UV_RUN) python -c 'import json, os; print(json.dumps({"message": os.environ["Q"]}))' | \
+		curl -sSN -X POST "$(API_URL)/chat" -H "Content-Type: application/json" \
+		-H "X-Dev-Role: $$ROLE" --data-binary @-
 
 # ---------------------------------------------------------------
 # Running: the full stack with Docker Compose
