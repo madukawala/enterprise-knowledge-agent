@@ -1,5 +1,5 @@
-# Development override: the API runs your local code and restarts when you
-# save a file, so there is no rebuild after each change.
+# Development override: the API and the UI run your local code and reload
+# when you save a file, so there is no rebuild after each change.
 #
 #   make up-dev
 #   (or: docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait)
@@ -16,6 +16,8 @@ services:
       - ./api:/app/api:ro
       - ./core:/app/core:ro
       - ./security:/app/security:ro
+      - ./rag:/app/rag:ro
+      - ./agents:/app/agents:ro
     command:
       - uvicorn
       - api.main:app
@@ -26,3 +28,10 @@ services:
       - --reload
       - --reload-dir
       - /app
+
+  ui:
+    environment:
+      # Streamlit reruns the page when a file in ui/ changes.
+      STREAMLIT_SERVER_RUN_ON_SAVE: "true"
+    volumes:
+      - ./ui:/app/ui:ro

@@ -90,7 +90,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    name: Compose check and image scan
+    name: Compose check and image scans
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,12 +101,21 @@ jobs:
           docker compose config --quiet
           docker compose --profile observability config --quiet
           docker compose -f compose.yaml -f compose.dev.yaml config --quiet
-      - name: Build the API image
-        run: docker build --target api -t enterprise-knowledge-agent/api:ci .
-      - name: Scan the image for known vulnerabilities (Trivy)
+      - name: Build the API and UI images
+        run: |
+          docker build --target api -t enterprise-knowledge-agent/api:ci .
+          docker build --target ui -t enterprise-knowledge-agent/ui:ci .
+      - name: Scan the API image for known vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: enterprise-knowledge-agent/api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the UI image for known vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: enterprise-knowledge-agent/ui:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"

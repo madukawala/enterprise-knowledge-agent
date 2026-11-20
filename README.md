@@ -16,9 +16,10 @@ The project is built step by step, one feature branch at a time, following the p
 - the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection;
 - hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`;
 - the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Gemini with OpenRouter as the fallback, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`;
-- the streaming chat API: `POST /chat` streams the answer token by token, together with live events for the activity panel (each agent starting and finishing, the plan, the search, the checks, anything degraded). A client that disconnects stops the run, every run has a time limit, and conversations continue with follow-up questions. Watch it with `make stream`.
+- the streaming chat API: `POST /chat` streams the answer token by token, together with live events for the activity panel (each agent starting and finishing, the plan, the search, the checks, anything degraded). A client that disconnects stops the run, every run has a time limit, and conversations continue with follow-up questions. Watch it with `make stream`;
+- the chat UI (Streamlit): the conversation on the left and the agent activity panel on the right, updated live as the answer streams in, with sources under each answer, a Stop button that cancels the agents, and follow-up questions. Open it at <http://localhost:8501> after `make up`, or run it with `make run-ui`.
 
-The chat UI, login, the research and tool agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API, ask the agents from the terminal and run the checks.
+Login, the research and tool agents, memory, the MCP server and the sandbox are added by the next branches. Until login exists, the UI has a role picker in its sidebar. [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the UI, ask the agents from the terminal and run the checks.
 
 ## Contents
 
@@ -152,16 +153,16 @@ enterprise-knowledge-agent/
   docs/           Architecture diagrams, decision records, assumptions, threat model, testing
   infra/          Config for the Docker services: Keycloak realm, Postgres init, Prometheus, Grafana
   .github/        CI workflow
-  Dockerfile      Image for the API (UI and MCP server targets are added later)
+  Dockerfile      Images for the API and the UI (the MCP server target is added later)
   compose.yaml    The full local stack; compose.dev.yaml adds live code reload
 ```
 
-Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `agents/`, `data/`, `evals/`, `ui/` (empty package), `infra/` and `tests/` exist. The `agents/`, `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work. Prompts are Markdown files in `agents/prompts/`, kept out of the code.
+Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `agents/`, `ui/`, `data/`, `evals/`, `infra/` and `tests/` exist. The `api/`, `agents/`, `ui/`, `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work. Prompts are Markdown files in `agents/prompts/`, kept out of the code.
 
 The code is one Python project with one `pyproject.toml` and one lock file, with two deliberate boundaries:
 
 - The sandbox has its own small dependency file (`sandbox/requirements.txt`), so its image contains only data-analysis libraries, with no project code and no secrets.
-- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). Four more contracts keep `core/` at the bottom layer, keep `rag/` and `security/` from importing the agents above them, and keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services.
+- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`), and the UI's image is built from its own dependency group (Streamlit and httpx), so it does not contain the backend at all. Four more contracts keep `core/` at the bottom layer, keep `rag/` and `security/` from importing the agents above them, and keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services.
 
 ## Getting started
 
@@ -201,7 +202,7 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
    make up
    ```
 
-   This builds the API image, starts every service and waits until all of them are healthy. The first start downloads several images and takes a few minutes. `make ps` shows each service and its health, and <http://localhost:8000/readyz> should report `"status": "ready"`.
+   This builds the API and UI images, starts every service and waits until all of them are healthy. The API container gets the model, Pinecone and LangSmith settings from `.env`; any of them may be empty, and the UI then shows what is missing (no model: the assistant is unavailable; no Pinecone: document search is unavailable). The first start downloads several images and takes a few minutes. `make ps` shows each service and its health, and <http://localhost:8000/readyz> should report `"status": "ready"`.
 
 4. Load the sample documents into Pinecone. This needs `PINECONE_API_KEY` in `.env` (a free Starter key is enough) and runs on your machine, not in Docker:
 
@@ -227,9 +228,11 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 
    To see each run in LangSmith, also set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. See [agents/README.md](agents/README.md).
 
-5. Open the app at <http://localhost:8501> and log in with one of the test users below. Use a different user to try each role.
+5. Open the chat at <http://localhost:8501>. Pick a role in the sidebar, then ask a question or click one of the example questions. The answer streams in on the left and the agent activity panel on the right shows each step. Changing the role starts a new conversation, so you can compare what each role may read. The UI is described in [ui/README.md](ui/README.md).
 
-Step 5 works once the UI branch is merged.
+   The search and the answers use the documents loaded in step 4 (`data/index/` is mounted read-only into the API container).
+
+Login with the test users below replaces the role picker once `feature/auth-rbac` is merged.
 
 ### Test users
 
@@ -245,7 +248,7 @@ The Keycloak realm file ([infra/keycloak/realm-helix.json](infra/keycloak/realm-
 
 | Service | Address |
 |---|---|
-| Chat UI | <http://localhost:8501> (added with `feature/streamlit-ui`) |
+| Chat UI | <http://localhost:8501> |
 | API | <http://localhost:8000> (health: `/healthz`, readiness: `/readyz`, metrics: `/metrics`, docs: `/docs`) |
 | Keycloak | <http://localhost:8080> (admin console: `/admin`, user `admin` and the password from `.env`) |
 | Prometheus (optional) | <http://localhost:9090>, started with `make up-observability` |
@@ -267,10 +270,10 @@ make down-volumes    # stop the services and delete all local data
 | Networks | `frontend` holds the services you open in a browser. `backend` is internal: it has no internet access and no published ports. Postgres and Redis are only on `backend`. |
 | Start order | Every service has a health check, and services wait until the ones they need are healthy. The API is healthy only when `/readyz` passes, which checks Postgres and Redis. |
 | Health endpoints | `/healthz` only says the process is running. `/readyz` checks each service the API needs and returns 503 if a required one is down. It reports `ok`, `failed` or `timeout` per check and never the error text, which goes to the log. |
-| Hardened containers | The API runs as an unprivileged user (UID 10001) with a read-only file system, all Linux capabilities dropped and `no-new-privileges`. Each service has a memory limit. |
-| Small images | The API image is built in two stages. The final stage holds only the installed packages, not the source or build tools. Base images use exact version tags. |
+| Hardened containers | The API and the UI run as an unprivileged user (UID 10001) with a read-only file system, all Linux capabilities dropped and `no-new-privileges`. Each service has a memory limit. |
+| Small images | The images are built in stages. The final API stage holds only the installed packages, not the source or build tools. The UI image holds only Streamlit, httpx and the `ui/` folder: no backend code. Base images use exact version tags. |
 | Secrets | Passwords come from `.env` and have no defaults, so the stack refuses to start without them. Each service receives only the variables it needs. Keycloak has its own database user and cannot read the application's tables. |
-| Image scan | CI builds the API image and scans it with Trivy. It fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. Run the same scan locally with `make scan-image`. |
+| Image scan | CI builds the API and UI images and scans them with Trivy. It fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. Run the same scan locally with `make scan-image`. |
 | Monitoring (optional) | `make up-observability` adds Prometheus, which reads `/metrics` from the API, and Grafana, already connected to Prometheus. Dashboards come with `feature/observability-evals`. |
 
 ## Development
@@ -288,9 +291,15 @@ Open <http://localhost:8000/healthz> to check it is running, or <http://localhos
 make stream Q="The PayHub database connection pool is exhausted. What should I do?" ROLE=analyst
 ```
 
-Until login is added (`feature/auth-rbac`), the role is taken from the `X-Dev-Role` header, which a production API refuses. The endpoint is described in [api/README.md](api/README.md). Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
+Then start the chat UI in a second terminal and open <http://localhost:8501>:
 
-To work inside the Docker stack instead, run `make up-dev`. The API container then runs the code from your machine and reloads when you save a file. A rebuild is only needed after you add a dependency.
+```bash
+make run-ui      # reloads when you edit a file in ui/
+```
+
+Until login is added (`feature/auth-rbac`), the role is taken from the `X-Dev-Role` header (the UI's role picker sends it), which a production API refuses. The endpoint is described in [api/README.md](api/README.md). Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
+
+To work inside the Docker stack instead, run `make up-dev`. The API and UI containers then run the code from your machine and reload when you save a file. A rebuild is only needed after you add a dependency.
 
 Run `make` on its own to list every task. The main ones:
 
@@ -305,7 +314,8 @@ Run `make` on its own to list every task. The main ones:
 | `make up` / `make up-dev` / `make down` | Start or stop the Docker stack |
 | `make ps` / `make logs` | Service health and logs |
 | `make compose-check` | Check the Compose files without starting anything |
-| `make scan-image` | Scan the API image with Trivy |
+| `make run-api` / `make run-ui` | Run the API or the chat UI on your machine, without Docker |
+| `make scan-image` | Scan the API and UI images with Trivy |
 | `make ingest-check` / `make ingest` | Check the sample documents, or load them into Pinecone |
 | `make search Q="..." ROLE=analyst` | Search the index as a role and print the ranked, cited chunks |
 | `make eval-retrieval` | Hit rate and MRR for several alpha values, saved to `docs/evals/retrieval.md` |
@@ -313,7 +323,7 @@ Run `make` on its own to list every task. The main ones:
 | `make stream Q="..." ROLE=analyst` | Ask the running API and print the streamed events, as the UI receives them |
 | `make diagrams` | Redraw the agent graph from the code (`docs/architecture/03-agent-graph.generated.md`) |
 
-The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API image.
+The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API and UI images.
 
 Dependencies are managed with uv. Add one with `uv add <package>` (or `uv add --dev <package>` for a tool), and commit the updated `uv.lock` together with `pyproject.toml`.
 
@@ -336,7 +346,7 @@ make test-live       # tests that call the real cloud services (uses your API ke
 make test-pinecone-local  # search tests against Pinecone's emulator in Docker (no account needed)
 ```
 
-`make eval` (answer-quality evaluations), `make e2e` (browser tests against the running stack) and `make load` are added with `feature/observability-evals`.
+The chat UI is tested without a browser: Streamlit's `AppTest` runs the page in the test process against replies recorded from the real API. `make eval` (answer-quality evaluations), `make e2e` (browser tests against the running stack) and `make load` are added with `feature/observability-evals`.
 
 The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 

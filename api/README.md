@@ -36,7 +36,7 @@ curl -N -X POST http://localhost:8000/chat \
   -d '{"message": "The PayHub database connection pool is exhausted. What should I do?"}'
 ```
 
-or simply `make stream Q="..." ROLE=analyst` with the API running.
+or simply `make stream Q="..." ROLE=analyst` with the API running. The chat UI ([ui/README.md](../ui/README.md)) is the main client of this endpoint.
 
 **Request body**
 

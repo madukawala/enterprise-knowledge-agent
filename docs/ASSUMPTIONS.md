@@ -75,8 +75,19 @@ Where the assignment leaves something open, this file records the choice made an
 | ST1 | Streamed tokens are a preview. The final answer is the `response_end` event, and a `response_start` tells the client to clear the text (a rewrite, or a model failing half-way). | The validator checks the whole answer, so it can only approve it at the end. Holding every token until then would make the user wait 10 to 40 seconds for the first word ([ADR-0013](adr/0013-streaming-with-server-sent-events.md)). |
 | ST2 | Until login exists (`feature/auth-rbac`), the role comes from an `X-Dev-Role` header (default `viewer`), refused when `APP_ENV=production`. Conversations belong to a role until then, and to a user after. | The streaming API and the UI can be built and tested before Keycloak is wired in, without ever accepting a role from the request body. |
 | ST3 | One whole answer may take at most 120 seconds (`CHAT_TIMEOUT_SECONDS`); a keep-alive line is sent after 15 quiet seconds. | A normal question takes 10 to 40 seconds on the free tiers, with a 30-second limit per model call. Anything slower is stuck. |
-| ST4 | A conversation answers one question at a time; a second one gets 409. | Two runs writing to one conversation would mix up its history. The chat UI (`feature/streamlit-ui`) will disable the input while an answer streams. |
+| ST4 | A conversation answers one question at a time; a second one gets 409. | Two runs writing to one conversation would mix up its history. The chat UI turns its input into a Stop button while an answer streams, so it never sends a second question. |
 | ST5 | When the client disconnects, the run is cancelled at once, even mid-answer. Nothing is saved for the half-finished question. | No quota is spent on answers nobody reads. Resuming abandoned answers is not in scope. |
+
+## Chat UI
+
+| # | Assumption | Reason |
+|---|---|---|
+| U1 | The conversation list in the sidebar holds the conversations of the current browser tab and is lost on reload. `feature/memory` stores threads in Postgres and adds `GET /threads`. | Keeping threads on the server needs the user ID from login and a store, which come with later branches ([ADR-0014](adr/0014-streamlit-chat-ui.md)). |
+| U2 | Until sign-in exists, the sidebar has a role picker that sends `X-Dev-Role`. A conversation keeps the role it started with; changing the role starts a new conversation. | The API ties a thread to its owner (ST2). Mixing roles in one thread would give 404. |
+| U3 | Sources show the document ID, title and section, without a link to the document. | There is no document endpoint yet; one would need its own role check. |
+| U4 | While an answer streams, any click (Stop, another conversation, an example question) stops it first. | That is how Streamlit runs a page; stopping also cancels the agents, so no quota is wasted. |
+| U5 | The UI shows what the API sends and does not re-check access. Every rule (roles, thread owners, limits) is enforced by the API. | The UI is a thin client; the browser and the UI server are not trusted to enforce anything. |
+| U6 | Thumbs up/down and the approval step are not shown yet; they arrive with `feature/hitl-feedback`. | Buttons that do nothing would mislead the user. The run ID they will use is already in the panel. |
 
 ## Memory
 

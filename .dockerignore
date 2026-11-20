@@ -47,3 +47,7 @@ data/sample_docs
 evals
 .docker-data
 *.log
+
+# Streamlit: only config.toml is copied into the UI image
+.streamlit/secrets.toml
+.streamlit/credentials.toml
