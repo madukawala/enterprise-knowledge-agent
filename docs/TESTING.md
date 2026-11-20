@@ -87,11 +87,14 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 | `make eval` | Ragas and LangSmith evaluations; writes results to `docs/evals/` (from `feature/observability-evals`) |
 | `make e2e` | Playwright smoke tests against the running stack (from `feature/observability-evals`) |
 | `make load` | Locust load test (from `feature/observability-evals`) |
+| `make compose-check` | Checks the Compose files without starting anything |
+| `make scan-image` | Builds the API image and scans it with Trivy, using the CI rules |
 
 - **Coverage:** `pytest-cov`, minimum **80%** with branch coverage on the core packages (`api/`, `core/`, `security/` today, then `agents/` and `rag/` as they are added; the list is in `[tool.coverage.run]` in `pyproject.toml`). The UI is covered by the end-to-end smoke tests.
 - **Static checks:** `ruff` (lint and format), `mypy --strict` on the application packages, and `import-linter` for package boundaries.
 - **pre-commit:** ruff, mypy, the import boundary check, gitleaks, and end-of-file, whitespace, YAML and TOML checks.
-- **CI (`.github/workflows/ci.yml`):** lint → type check → import boundary check (the UI must not import backend code) → tests with coverage → `bandit` → `pip-audit` → `gitleaks` → Trivy scan of built images (Trivy is added with the images in `feature/docker-infra`). The result shows as a badge in the README. `make check` runs the same checks locally, except gitleaks.
+- **CI (`.github/workflows/ci.yml`):** lint → type check → import boundary check (the UI must not import backend code) → tests with coverage → `bandit` → `pip-audit` → `gitleaks`. A separate job checks the Compose files, builds the API image and scans it with Trivy: it fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. The result shows as a badge in the README. `make check` runs the same checks locally, except gitleaks and Trivy; `make compose-check` and `make scan-image` cover those two Docker steps.
+- **Stack smoke check:** `make up` starts the Compose stack and waits until every health check passes. The API's health check calls `/readyz`, which only passes when Postgres and Redis answer, so a green `make up` means the services can reach each other.
 
 ## Definition of done for every branch
 
@@ -105,7 +108,7 @@ Each entry becomes a parametrised test case, so adding an attack is one YAML blo
 | Branch | Focus |
 |---|---|
 | `feature/project-scaffold` | Test harness, markers, fixtures, CI and coverage gate |
-| `feature/docker-infra` | Health checks, container start order, Trivy |
+| `feature/docker-infra` | Readiness logic (ready, degraded, not ready, timeouts) with fake checks; probe failures against closed ports; `/readyz` returns 503 without leaking connection details; `/metrics` counts requests but not health probes; Compose check, healthy start order and Trivy |
 | `feature/sample-data-ingestion` | Front-matter parsing, chunking, stable IDs, idempotent re-runs |
 | `feature/hybrid-retrieval` | Score weighting, metadata and permission filters, Pinecone Local, first hit rate and MRR |
 | `feature/langgraph-agents` | Routing and failure containment with fake LLMs |

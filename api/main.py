@@ -12,9 +12,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_client import CollectorRegistry
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from api.errors import register_exception_handlers
 from api.middleware import RequestContextMiddleware
+from api.readiness import build_checks
 from api.routes import health
 from core.config import Settings, get_settings
 from core.logging import configure_logging, get_logger
@@ -42,11 +45,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None if settings.is_production else "/openapi.json",
     )
     app.state.settings = settings
+    app.state.readiness_checks = build_checks(settings)
 
+    if settings.metrics_enabled:
+        _add_metrics(app)
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
     return app
+
+
+def _add_metrics(app: FastAPI) -> None:
+    """Expose request count, errors and latency per endpoint on /metrics.
+
+    Each app gets its own metrics registry, so tests can build many apps in
+    one process without "duplicated metric" errors. Health probes and the
+    metrics endpoint itself are left out, as Docker and Prometheus call them
+    every few seconds and they would hide the real traffic.
+    """
+    Instrumentator(
+        registry=CollectorRegistry(),
+        excluded_handlers=["/healthz", "/readyz", "/metrics"],
+    ).instrument(app).expose(app, include_in_schema=False)
 
 
 app = create_app()

@@ -45,3 +45,10 @@ def test_get_settings_reads_the_environment_once() -> None:
         assert get_settings() is get_settings()
     finally:
         get_settings.cache_clear()
+
+
+def test_connection_strings_are_hidden_when_settings_are_printed() -> None:
+    settings = Settings(_env_file=None, postgres_url="postgresql://app:s3cret@postgres:5432/app")
+
+    assert "s3cret" not in repr(settings)
+    assert "s3cret" not in str(settings.model_dump())

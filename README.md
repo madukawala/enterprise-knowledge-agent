@@ -8,7 +8,13 @@ The assistant is built for **Helix Commercial Bank**, a fictional bank. All docu
 
 ## Project status
 
-The project is built step by step, one feature branch at a time, following the plan in the [Roadmap](#roadmap) section. The architecture and design are complete, and the project scaffold is in place: settings, structured logging, error handling, a minimal API with health checks, the test harness and CI. The Docker setup in [Getting started](#getting-started) describes how the finished system runs and becomes available with the Docker branch. Until then, see [Development](#development) to run the API and the checks locally.
+The project is built step by step, one feature branch at a time, following the plan in the [Roadmap](#roadmap) section. Done so far:
+
+- the architecture and design;
+- the project scaffold: settings, structured logging, error handling, a minimal API, the test harness and CI;
+- the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana.
+
+The chat UI, the agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the checks.
 
 ## Contents
 
@@ -140,10 +146,13 @@ enterprise-knowledge-agent/
   evals/          Evaluation datasets
   tests/          Unit, integration, graph, security, resilience and end-to-end tests
   docs/           Architecture diagrams, decision records, assumptions, threat model, testing
+  infra/          Config for the Docker services: Keycloak realm, Postgres init, Prometheus, Grafana
   .github/        CI workflow
+  Dockerfile      Image for the API (UI and MCP server targets are added later)
+  compose.yaml    The full local stack; compose.dev.yaml adds live code reload
 ```
 
-Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `ui/` (empty package) and `tests/` exist.
+Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `ui/` (empty package), `infra/` and `tests/` exist.
 
 The code is one Python project with one `pyproject.toml` and one lock file, with two deliberate boundaries:
 
@@ -180,13 +189,15 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 
    Open `.env` and fill in the keys. Every setting is explained in `.env.example`. Never commit `.env`.
 
+   For the Docker stack, also replace every `change-me` password. Use letters, digits, `-` and `_` only, because the passwords go into connection URLs.
+
 3. Start the full stack:
 
    ```bash
-   docker compose up -d --build
+   make up
    ```
 
-   The first start downloads several images and takes a few minutes. Check that every service is healthy with `docker compose ps`.
+   This builds the API image, starts every service and waits until all of them are healthy. The first start downloads several images and takes a few minutes. `make ps` shows each service and its health, and <http://localhost:8000/readyz> should report `"status": "ready"`.
 
 4. Load the sample documents into Pinecone:
 
@@ -196,23 +207,51 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 
    You can run this again at any time. It updates the same records and does not create duplicates.
 
-5. Open the app at <http://localhost:8501> and log in with one of the test users. The user names and demo passwords are listed in the Keycloak realm file. Use a different user to try each role.
+5. Open the app at <http://localhost:8501> and log in with one of the test users below. Use a different user to try each role.
+
+Steps 4 and 5 work once the sample-data and UI branches are merged.
+
+### Test users
+
+The Keycloak realm file ([infra/keycloak/realm-helix.json](infra/keycloak/realm-helix.json)) creates one user per role. The passwords are for this local demo only.
+
+| User | Role | Password |
+|---|---|---|
+| `vera.viewer` | Viewer | `viewer-demo-pass` |
+| `adam.analyst` | Analyst | `analyst-demo-pass` |
+| `ada.admin` | Administrator | `admin-demo-pass` |
 
 ### Service addresses
 
 | Service | Address |
 |---|---|
-| Chat UI | <http://localhost:8501> |
-| API | <http://localhost:8000> (health: `/healthz`, readiness: `/readyz`) |
-| Keycloak | <http://localhost:8080> |
-| Grafana (optional) | started with `docker compose --profile observability up -d` |
+| Chat UI | <http://localhost:8501> (added with `feature/streamlit-ui`) |
+| API | <http://localhost:8000> (health: `/healthz`, readiness: `/readyz`, metrics: `/metrics`, docs: `/docs`) |
+| Keycloak | <http://localhost:8080> (admin console: `/admin`, user `admin` and the password from `.env`) |
+| Prometheus (optional) | <http://localhost:9090>, started with `make up-observability` |
+| Grafana (optional) | <http://localhost:3000>, user `admin` and the password from `.env` |
+
+Every port is published on `127.0.0.1` only, so nothing is reachable from other machines on your network. Postgres and Redis have no published ports at all.
 
 ### Stopping
 
 ```bash
-docker compose down        # stop the services and keep the data
-docker compose down -v     # stop the services and delete all local data
+make down            # stop the services and keep the data
+make down-volumes    # stop the services and delete all local data
 ```
+
+### How the Docker stack is set up
+
+| Topic | What is done |
+|---|---|
+| Networks | `frontend` holds the services you open in a browser. `backend` is internal: it has no internet access and no published ports. Postgres and Redis are only on `backend`. |
+| Start order | Every service has a health check, and services wait until the ones they need are healthy. The API is healthy only when `/readyz` passes, which checks Postgres and Redis. |
+| Health endpoints | `/healthz` only says the process is running. `/readyz` checks each service the API needs and returns 503 if a required one is down. It reports `ok`, `failed` or `timeout` per check and never the error text, which goes to the log. |
+| Hardened containers | The API runs as an unprivileged user (UID 10001) with a read-only file system, all Linux capabilities dropped and `no-new-privileges`. Each service has a memory limit. |
+| Small images | The API image is built in two stages. The final stage holds only the installed packages, not the source or build tools. Base images use exact version tags. |
+| Secrets | Passwords come from `.env` and have no defaults, so the stack refuses to start without them. Each service receives only the variables it needs. Keycloak has its own database user and cannot read the application's tables. |
+| Image scan | CI builds the API image and scans it with Trivy. It fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. Run the same scan locally with `make scan-image`. |
+| Monitoring (optional) | `make up-observability` adds Prometheus, which reads `/metrics` from the API, and Grafana, already connected to Prometheus. Dashboards come with `feature/observability-evals`. |
 
 ## Development
 
@@ -220,10 +259,12 @@ You need Python 3.12 and [uv](https://docs.astral.sh/uv/). uv downloads Python 3
 
 ```bash
 make install     # install all dependencies and the pre-commit hooks
-make run-api     # start the API on http://localhost:8000 with auto-reload
+make run-api     # start only the API on http://localhost:8000 with auto-reload
 ```
 
-Open <http://localhost:8000/healthz> to check it is running, or <http://localhost:8000/docs> for the interactive API docs. Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work.
+Open <http://localhost:8000/healthz> to check it is running, or <http://localhost:8000/docs> for the interactive API docs. Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
+
+To work inside the Docker stack instead, run `make up-dev`. The API container then runs the code from your machine and reloads when you save a file. A rebuild is only needed after you add a dependency.
 
 Run `make` on its own to list every task. The main ones:
 
@@ -235,8 +276,12 @@ Run `make` on its own to list every task. The main ones:
 | `make test` | Run the tests with the 80% coverage gate |
 | `make audit` | Security lint (bandit) and known vulnerabilities in dependencies (pip-audit) |
 | `make check` | Everything above, the same checks CI runs |
+| `make up` / `make up-dev` / `make down` | Start or stop the Docker stack |
+| `make ps` / `make logs` | Service health and logs |
+| `make compose-check` | Check the Compose files without starting anything |
+| `make scan-image` | Scan the API image with Trivy |
 
-The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history.
+The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API image.
 
 Dependencies are managed with uv. Add one with `uv add <package>` (or `uv add --dev <package>` for a tool), and commit the updated `uv.lock` together with `pyproject.toml`.
 

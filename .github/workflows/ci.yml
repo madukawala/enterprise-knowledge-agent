@@ -2,8 +2,8 @@
 # A branch is merged only when every job here is green.
 #
 # Order: lint -> type check -> import boundaries -> tests with coverage,
-# with the security checks running alongside. The Trivy image scan is
-# added together with the Docker images in feature/docker-infra.
+# with the security checks, the Compose check and the image scan running
+# alongside.
 
 name: CI
 
@@ -88,3 +88,32 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Compose check and image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the Compose files
+        # .env.example has a value for every variable compose.yaml needs.
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose --profile observability config --quiet
+          docker compose -f compose.yaml -f compose.dev.yaml config --quiet
+      - name: Build the API image
+        run: docker build --target api -t enterprise-knowledge-agent/api:ci .
+      - name: Scan the image for known vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: enterprise-knowledge-agent/api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the Dockerfile for risky settings (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"

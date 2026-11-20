@@ -1,0 +1,126 @@
+{
+  "realm": "helix",
+  "displayName": "Helix Commercial Bank",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "loginWithEmailAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "roles": {
+    "realm": [
+      {
+        "name": "viewer",
+        "description": "Reads public and internal documents"
+      },
+      {
+        "name": "analyst",
+        "description": "Viewer access plus confidential documents and the analysis tools"
+      },
+      {
+        "name": "admin",
+        "description": "Full access, including restricted documents and admin actions"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "enterprise-knowledge-ui",
+      "name": "Enterprise Knowledge Agent UI",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8501/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8501"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8501/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "enterprise-knowledge-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "vera.viewer",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Vera",
+      "lastName": "Viewer",
+      "email": "vera.viewer@helix.example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "viewer-demo-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-helix",
+        "viewer"
+      ]
+    },
+    {
+      "username": "adam.analyst",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Adam",
+      "lastName": "Analyst",
+      "email": "adam.analyst@helix.example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "analyst-demo-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-helix",
+        "analyst"
+      ]
+    },
+    {
+      "username": "ada.admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Admin",
+      "email": "ada.admin@helix.example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin-demo-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-helix",
+        "admin"
+      ]
+    }
+  ]
+}
