@@ -43,5 +43,6 @@ docs
 tests
 infra
 data/index
+data/sample_docs
 .docker-data
 *.log

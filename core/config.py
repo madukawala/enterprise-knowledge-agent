@@ -9,6 +9,7 @@ environment is read once per process.
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
@@ -61,6 +62,26 @@ class Settings(BaseSettings):
 
     # Request metrics for Prometheus on /metrics.
     metrics_enabled: bool = True
+
+    # --- Pinecone and the document index (ADR-0003, ADR-0004, ADR-0005) ---
+    # Needed by `make ingest` and, later, by document search. Without a key,
+    # `make ingest-check` still reads and chunks the documents.
+    pinecone_api_key: SecretStr | None = None
+    pinecone_index_name: str = Field(
+        default="helix-knowledge", min_length=1, max_length=45, pattern=r"^[a-z0-9-]+$"
+    )
+    # The free Starter plan only offers serverless indexes on aws/us-east-1.
+    pinecone_cloud: str = "aws"
+    pinecone_region: str = "us-east-1"
+    # Pinecone-hosted embedding model. The dimension must match the model;
+    # change both together, then delete the index and run `make ingest` again.
+    embedding_model: str = "multilingual-e5-large"
+    embedding_dimension: int = Field(default=1024, gt=0)
+
+    # Where ingestion reads the documents from, and where it saves the fitted
+    # BM25 parameters and the document catalog (git-ignored, rebuilt by ingest).
+    sample_docs_dir: Path = Path("data/sample_docs")
+    index_artifacts_dir: Path = Path("data/index")
 
     @property
     def is_production(self) -> bool:

@@ -4,7 +4,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help install lint format typecheck imports test test-unit test-security test-live \
         audit check run-api clean env-file up up-dev up-observability down down-volumes \
-        ps logs compose-check scan-image
+        ps logs compose-check scan-image ingest ingest-check
 
 UV_RUN := uv run
 # Exported from uv.lock for pip-audit. Kept in .cache/, which git ignores.
@@ -54,8 +54,8 @@ test-unit: ## Fast unit tests only
 test-security: ## Security tests only
 	$(UV_RUN) pytest -m security
 
-# pytest exits with code 5 when no tests match, which is expected until the
-# first live tests are added, so that case is not treated as a failure.
+# pytest exits with code 5 when no tests match (for example when every live
+# test is filtered out), so that case is not treated as a failure.
 test-live: ## Tests that call real cloud services (uses your API keys and quota)
 	$(UV_RUN) pytest -m live || [ $$? -eq 5 ]
 
@@ -64,7 +64,7 @@ test-live: ## Tests that call real cloud services (uses your API keys and quota)
 # ---------------------------------------------------------------
 
 audit: ## Security lint (bandit) and known vulnerabilities in dependencies (pip-audit)
-	$(UV_RUN) bandit -q -c pyproject.toml -r api core security ui
+	$(UV_RUN) bandit -q -c pyproject.toml -r api core security rag ingestion ui
 	@mkdir -p $(dir $(AUDIT_REQUIREMENTS))
 	uv export --frozen --all-groups --no-emit-project --format requirements-txt \
 		-o $(AUDIT_REQUIREMENTS) -q
@@ -77,6 +77,16 @@ scan-image: ## Scan the API image for known vulnerabilities (Trivy, same rules a
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 		-v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
 		--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(API_IMAGE)
+
+# ---------------------------------------------------------------
+# Documents: load the sample documents into Pinecone
+# ---------------------------------------------------------------
+
+ingest: ## Load data/sample_docs into Pinecone (needs PINECONE_API_KEY). Safe to run again
+	$(UV_RUN) python -m ingestion
+
+ingest-check: ## Check and chunk the documents without calling Pinecone (no key needed)
+	$(UV_RUN) python -m ingestion --dry-run
 
 # ---------------------------------------------------------------
 # Running: the API on its own
