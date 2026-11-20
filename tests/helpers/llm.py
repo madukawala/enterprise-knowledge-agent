@@ -1,16 +1,111 @@
-"""Fake chat models, so tests never call Gemini or Groq.
+"""Fake chat models, so tests never call Gemini or OpenRouter.
 
-The fake model returns the replies you give it, in order. This keeps tests
-free, fast and the same on every run.
+- `fake_chat_model(["reply", ...])` answers plain chat calls in order.
+- `ScriptedChatModel` also answers structured calls (`with_structured_output`),
+  which the agents use for the supervisor and the search plan. Replies are
+  scripted per schema name, so a test reads like a conversation:
+
+      model = ScriptedChatModel(
+          structured={"SupervisorDecision": [{"intent": "document_question", ...}]},
+          texts=["The pool limit is 200 [1]."],
+      )
+
+  A scripted `Exception` is raised instead of answering, and `delay` makes
+  every call slow, for timeout tests. `calls` records what was sent.
+
+This keeps tests free, fast and the same on every run.
 """
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
+from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import BaseModel, Field
+
+Reply = str | dict[str, Any] | BaseModel | Exception
+
+USAGE = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
 
 
 def fake_chat_model(replies: Iterable[str | AIMessage]) -> GenericFakeChatModel:
     """Return a chat model that answers with `replies`, one per call."""
     messages = [reply if isinstance(reply, AIMessage) else AIMessage(reply) for reply in replies]
     return GenericFakeChatModel(messages=iter(messages))
+
+
+class ScriptedChatModel(BaseChatModel):
+    structured: dict[str, list[Reply]] = Field(default_factory=dict)
+    texts: list[Reply] = Field(default_factory=list)
+    delay: float = 0.0
+    calls: list[tuple[str, list[BaseMessage]]] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self) -> str:
+        return "scripted"
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        return self.bind(tools=[convert_to_openai_tool(tool) for tool in tools], **kwargs)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        tools = kwargs.get("tools")
+        if tools:
+            name = tools[0]["function"]["name"]
+            reply = self._next(self.structured.get(name, []), name, messages)
+            args = reply.model_dump(mode="json") if isinstance(reply, BaseModel) else reply
+            message = AIMessage(
+                "",
+                tool_calls=[{"name": name, "args": args, "id": "call-1", "type": "tool_call"}],
+                usage_metadata=USAGE,  # type: ignore[arg-type]
+            )
+        else:
+            reply = self._next(self.texts, "text", messages)
+            message = AIMessage(str(reply), usage_metadata=USAGE)  # type: ignore[arg-type]
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        return self._generate(messages, stop, **kwargs)
+
+    def _next(self, queue: list[Reply], name: str, messages: list[BaseMessage]) -> Any:
+        self.calls.append((name, list(messages)))
+        if not queue:
+            raise AssertionError(f"ScriptedChatModel has no reply left for {name!r}")
+        reply = queue.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    def prompts_for(self, name: str) -> list[str]:
+        """The full text of every prompt sent for `name` ("text" for plain calls)."""
+        return [
+            "\n".join(message.text for message in messages)
+            for call_name, messages in self.calls
+            if call_name == name
+        ]

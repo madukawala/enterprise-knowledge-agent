@@ -71,7 +71,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --all-groups
       - name: Security lint (bandit)
-        run: uv run bandit -q -c pyproject.toml -r api core security rag ingestion evals ui
+        run: uv run bandit -q -c pyproject.toml -r api core security rag ingestion agents evals ui
       - name: Known vulnerabilities in dependencies (pip-audit)
         run: |
           uv export --frozen --all-groups --no-emit-project --format requirements-txt \

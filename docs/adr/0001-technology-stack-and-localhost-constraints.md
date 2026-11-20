@@ -15,7 +15,7 @@ The assistant must be enterprise-grade, but it runs on one developer machine (Ap
 | Frontend | Streamlit, reading server-sent events |
 | Backend | FastAPI (async), Pydantic v2, `structlog`, `tenacity` |
 | Orchestration | LangGraph `StateGraph` with sub-graphs ([ADR-0006](0006-langgraph-agents-and-deep-agent-patterns.md)) |
-| LLMs | Gemini Flash → Groq, cloud free tiers ([ADR-0002](0002-llm-selection-gemini-flash-with-groq-fallback.md)) |
+| LLMs | Gemini Flash → OpenRouter, cloud free tiers ([ADR-0002](0002-llm-selection-gemini-flash-with-openrouter-fallback.md)) |
 | Retrieval | Pinecone Starter, hosted embeddings and reranker ([ADR-0003](0003-pinecone-single-hybrid-index.md), [0004](0004-embeddings-and-bm25.md), [0010](0010-reranking.md)) |
 | Identity | Keycloak in Docker ([ADR-0007](0007-keycloak-rbac-and-data-access.md)) |
 | State | Postgres (checkpoints, memory, feedback, audit), Redis (rate limiting) |

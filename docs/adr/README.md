@@ -14,7 +14,7 @@ Together with [ASSUMPTIONS.md](../ASSUMPTIONS.md), these records explain the ass
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-technology-stack-and-localhost-constraints.md) | The technology stack, chosen to run on one laptop at no cost | Accepted |
-| [0002](0002-llm-selection-gemini-flash-with-groq-fallback.md) | Gemini Flash as the main language model, Groq as the backup, with a circuit breaker | Accepted |
+| [0002](0002-llm-selection-gemini-flash-with-openrouter-fallback.md) | Gemini Flash as the main language model, OpenRouter as the backup, with a circuit breaker | Accepted |
 | [0003](0003-pinecone-single-hybrid-index.md) | One Pinecone hybrid index that combines the meaning-based and keyword scores | Accepted |
 | [0004](0004-embeddings-and-bm25.md) | Pinecone-hosted `multilingual-e5-large` embeddings and BM25 fitted on our own documents | Accepted |
 | [0005](0005-pinecone-namespaces.md) | One namespace per document collection; filters for everything else | Accepted |

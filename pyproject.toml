@@ -26,6 +26,15 @@ dependencies = [
     # Reads the front matter (title, department, access level...) of the
     # sample documents during ingestion
     "pyyaml>=6.0",
+    # The agent graph (ADR-0006) and the chat model interface it uses
+    "langgraph>=1.2.24",
+    "langchain-core>=1.8.4",
+    # Language models: Gemini first, OpenRouter as the fallback (ADR-0002).
+    # OpenRouter speaks the OpenAI API, so the OpenAI client is used for it.
+    "langchain-google-genai>=4.5.2",
+    # Traces of every agent run, model call and search
+    "langsmith>=0.15.1",
+    "langchain-openai>=1.8.5",
 ]
 
 [dependency-groups]
@@ -36,8 +45,7 @@ dev = [
     "pytest-cov>=6.0",
     "hypothesis>=6.115",
     "respx>=0.21",
-    # Test helpers: fake chat models and signed test tokens
-    "langchain-core>=0.3",
+    # Test helper: signed test tokens
     "pyjwt[crypto]>=2.10",
     # Code quality
     "ruff>=0.8",
@@ -59,7 +67,7 @@ build-backend = "hatchling.build"
 # The sandbox is not listed here on purpose: it has its own small
 # requirements file and is built into its own image.
 [tool.hatch.build.targets.wheel]
-packages = ["api", "core", "security", "rag", "ingestion", "ui"]
+packages = ["api", "core", "security", "rag", "ingestion", "agents", "ui"]
 
 # ---------------------------------------------------------------
 # Ruff: linting and formatting
@@ -97,7 +105,7 @@ select = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["api", "core", "security", "rag", "ingestion", "evals", "ui"]
+files = ["api", "core", "security", "rag", "ingestion", "agents", "evals", "ui"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -109,31 +117,37 @@ warn_required_dynamic_aliases = true
 # Import boundaries (checked in CI with `lint-imports`)
 # ---------------------------------------------------------------
 [tool.importlinter]
-root_packages = ["api", "core", "security", "rag", "ingestion", "evals", "ui"]
+root_packages = ["api", "core", "security", "rag", "ingestion", "agents", "evals", "ui"]
 
 [[tool.importlinter.contracts]]
 name = "The UI talks to the API over HTTP only and never imports backend code"
 type = "forbidden"
 source_modules = ["ui"]
-forbidden_modules = ["api", "core", "security", "rag", "ingestion", "evals"]
+forbidden_modules = ["api", "core", "security", "rag", "ingestion", "agents", "evals"]
 
 [[tool.importlinter.contracts]]
 name = "Core is the bottom layer and does not depend on other packages"
 type = "forbidden"
 source_modules = ["core"]
-forbidden_modules = ["api", "security", "rag", "ingestion", "evals", "ui"]
+forbidden_modules = ["api", "security", "rag", "ingestion", "agents", "evals", "ui"]
 
 [[tool.importlinter.contracts]]
 name = "Ingestion is an offline job: the running services never import it"
 type = "forbidden"
-source_modules = ["api", "rag", "security"]
+source_modules = ["api", "rag", "security", "agents"]
 forbidden_modules = ["ingestion"]
 
 [[tool.importlinter.contracts]]
 name = "Evaluations are run by hand: nothing else imports them"
 type = "forbidden"
-source_modules = ["api", "rag", "security", "ingestion"]
+source_modules = ["api", "rag", "security", "ingestion", "agents"]
 forbidden_modules = ["evals"]
+
+[[tool.importlinter.contracts]]
+name = "Search and security are lower layers: they never import the agents"
+type = "forbidden"
+source_modules = ["rag", "security"]
+forbidden_modules = ["agents"]
 
 # ---------------------------------------------------------------
 # pytest and coverage
@@ -161,7 +175,7 @@ markers = [
 [tool.coverage.run]
 branch = true
 # Extended with each core package as it is added (agents, rag, ...).
-source = ["api", "core", "security", "rag", "ingestion", "evals"]
+source = ["api", "core", "security", "rag", "ingestion", "agents", "evals"]
 
 [tool.coverage.report]
 fail_under = 80
