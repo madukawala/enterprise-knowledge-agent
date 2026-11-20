@@ -10,9 +10,9 @@ environment is read once per process.
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # A settings error must never print the values it was given: they
+        # include API keys and passwords (the message would end up in the
+        # terminal or the container logs).
+        hide_input_in_errors=True,
     )
 
     app_name: str = "enterprise-knowledge-agent"
@@ -102,6 +106,95 @@ class Settings(BaseSettings):
     rerank_model: str = "bge-reranker-v2-m3"
     # How many merged candidates are sent to the re-ranker.
     rerank_candidates: int = Field(default=30, ge=1, le=100)
+
+    # --- Language models (ADR-0002) ---
+    # Gemini answers first. If it fails, times out or returns something
+    # unusable, OpenRouter takes over. One key is enough to run the agents;
+    # with both, a Gemini outage does not stop the assistant.
+    #
+    # Model names have no default on purpose. Free-tier models are retired
+    # often, and a name kept in code goes stale without anyone noticing. So
+    # each provider with a key must also have its model set in `.env`
+    # (`.env.example` lists the recommended ones); see
+    # `_every_provider_has_a_model` below.
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str | None = None
+    # OpenRouter gives one key for many hosted models; `:free` models cost
+    # nothing (about 50 requests a day). Use a non-Google model, so a Google
+    # outage does not take out the fallback too.
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str | None = None
+    # Low, so routing and answers stay close to the sources and repeatable.
+    llm_temperature: float = Field(default=0.2, ge=0, le=1)
+    # Time limit for one model call, and retries inside one provider before
+    # moving on to the next one.
+    llm_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    llm_max_retries: int = Field(default=1, ge=0, le=5)
+
+    # --- Agents (ADR-0006) ---
+    # How many earlier messages of the conversation the agents see. Enough
+    # for follow-up questions; small enough to keep prompts and quota low.
+    agent_history_messages: int = Field(default=6, ge=0, le=20)
+
+    # --- LangSmith tracing ---
+    # Off unless switched on and a key is set. The app works the same
+    # without it; it just sends no traces.
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "helix-knowledge-agent"
+    # Change for the EU region: https://eu.api.smith.langchain.com
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
+    @field_validator(
+        "postgres_url",
+        "redis_url",
+        "pinecone_api_key",
+        "gemini_api_key",
+        "openrouter_api_key",
+        "langsmith_api_key",
+        "gemini_model",
+        "openrouter_model",
+        mode="before",
+    )
+    @classmethod
+    def _empty_means_not_set(cls, value: object) -> object:
+        # `.env.example` lists every key with an empty value, e.g.
+        # `OPENROUTER_API_KEY=`. Treat that as "not set", not as an empty key.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _every_provider_has_a_model(self) -> Self:
+        """A provider with a key must have its model set too.
+
+        Checked when the settings are read, so a missing model stops the app
+        at startup with a clear message, not on a user's first question. A
+        provider without a key is off, and its model is not needed.
+        """
+        missing = [
+            f"{name.upper()}_API_KEY is set, so {name.upper()}_MODEL must be set too"
+            for name, key, model in self._llm_settings()
+            if key is not None and model is None
+        ]
+        if missing:
+            raise ValueError("; ".join(missing) + ". See .env.example for the recommended models.")
+        return self
+
+    def _llm_settings(self) -> list[tuple[str, SecretStr | None, str | None]]:
+        return [
+            ("gemini", self.gemini_api_key, self.gemini_model),
+            ("openrouter", self.openrouter_api_key, self.openrouter_model),
+        ]
+
+    def llm_providers(self) -> list[tuple[str, SecretStr, str]]:
+        """The language model providers that have a key, in failover order:
+        (name, key, model)."""
+        return [
+            (name, key, model)
+            for name, key, model in self._llm_settings()
+            if key is not None and model is not None
+        ]
 
     @property
     def is_production(self) -> bool:

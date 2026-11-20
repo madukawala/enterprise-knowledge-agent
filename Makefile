@@ -5,7 +5,7 @@
 .PHONY: help install lint format typecheck imports test test-unit test-security test-live \
         audit check run-api clean env-file up up-dev up-observability down down-volumes \
         ps logs compose-check scan-image ingest ingest-check search eval-retrieval \
-        test-pinecone-local
+        test-pinecone-local ask chat diagrams
 
 UV_RUN := uv run
 # Exported from uv.lock for pip-audit. Kept in .cache/, which git ignores.
@@ -74,7 +74,7 @@ test-pinecone-local: ## Search tests against Pinecone Local (Docker, no account 
 # ---------------------------------------------------------------
 
 audit: ## Security lint (bandit) and known vulnerabilities in dependencies (pip-audit)
-	$(UV_RUN) bandit -q -c pyproject.toml -r api core security rag ingestion evals ui
+	$(UV_RUN) bandit -q -c pyproject.toml -r api core security rag ingestion agents evals ui
 	@mkdir -p $(dir $(AUDIT_REQUIREMENTS))
 	uv export --frozen --all-groups --no-emit-project --format requirements-txt \
 		-o $(AUDIT_REQUIREMENTS) -q
@@ -110,6 +110,26 @@ search: ## Search the index as a role: make search Q="your question" ROLE=analys
 
 eval-retrieval: ## Hit rate and MRR for several alpha values; saves docs/evals/retrieval.md
 	$(UV_RUN) python -m evals.retrieval --report docs/evals/retrieval.md
+
+# ---------------------------------------------------------------
+# Agents: ask questions from the terminal
+# ---------------------------------------------------------------
+
+# Example: make ask Q="Why did card payments fail in March?" ROLE=analyst
+# Needs GEMINI_API_KEY or OPENROUTER_API_KEY, and the index from `make ingest`.
+# Q and ROLE are passed as environment variables, as in `make search`.
+ask: export Q := $(Q)
+ask: export ROLE := $(ROLE)
+ask: ## Ask the agents one question as a role: make ask Q="your question" ROLE=analyst
+	@test -n "$$Q" || { echo 'Usage: make ask Q="your question" [ROLE=viewer|analyst|admin]'; exit 1; }
+	$(UV_RUN) python -m agents.cli "$$Q" --role "$$ROLE"
+
+chat: export ROLE := $(ROLE)
+chat: ## A conversation with the agents in the terminal (follow-up questions work)
+	$(UV_RUN) python -m agents.cli --chat --role "$$ROLE"
+
+diagrams: ## Draw the agent graph from the code into docs/architecture/03-agent-graph.generated.md
+	$(UV_RUN) python -m agents.diagram
 
 # ---------------------------------------------------------------
 # Running: the API on its own

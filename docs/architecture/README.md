@@ -17,6 +17,7 @@ The reasons behind the design are recorded in [docs/adr](../adr/README.md).
 | 1 | [System context](01-system-context.drawio.svg) | draw.io | The three user roles, the assistant and every outside system it depends on |
 | 2 | [Containers and deployment](02-containers.drawio.svg) | draw.io | The Docker Compose services, their ports and networks, and the cloud services they call |
 | 3 | [Agent graph](03-agent-graph.drawio.svg) | draw.io | The supervisor and specialist agents, how work is routed, the approval step, answer checks, memory and the research sub-graph |
+| 3a | [Agent graph, from the code](03-agent-graph.generated.md) | Mermaid (generated) | The graph as built today, drawn by `make diagrams`; a test fails if it falls behind the code |
 | 4 | [Search pipeline](04-search-pipeline.md) | Mermaid | How documents are indexed, how a question is searched, and how the two search scores are combined |
 | 5 | [Recursive research](05-rlm-research.md) | Mermaid | The six research steps, using the example "Summarize payment-failure outages over the last year" |
 | 6 | [Layered security](06-security-layers.drawio.svg) | draw.io | The checks on every request and every answer, plus controls that apply everywhere |
@@ -26,7 +27,7 @@ The reasons behind the design are recorded in [docs/adr](../adr/README.md).
 | 10 | [Request lifecycle](10-request-lifecycle.md) | Mermaid | One request from login to the final answer |
 | - | [Test pyramid](test-pyramid.drawio.svg) | draw.io | The test layers, used in [TESTING.md](../TESTING.md) |
 
-A second version of the agent graph is generated straight from the code once the agents are built (`make diagrams`). Comparing it with diagram 3 shows that the code matches the design.
+Diagram 3a is generated straight from the code (`make diagrams`). Comparing it with diagram 3 shows how much of the design is built: today the input guard, supervisor, retrieval agent, response agent and validator. The other agents appear in 3a as their branches add them.
 
 ## Colours in the draw.io diagrams
 

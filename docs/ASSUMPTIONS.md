@@ -38,23 +38,35 @@ Where the assignment leaves something open, this file records the choice made an
 
 | # | Assumption | Reason |
 |---|---|---|
-| M1 | Gemini Flash (free tier) is the primary LLM and Groq (free tier, `llama-3.3-70b-versatile`) the fallback. Model names live in config. | [ADR-0002](adr/0002-llm-selection-gemini-flash-with-groq-fallback.md) |
+| M1 | Gemini Flash (free tier, `gemini-3.6-flash`) is the primary LLM, and OpenRouter with a free non-Google model (`nvidia/nemotron-3.5-super-vl:free`, about 50 requests a day) is the fallback. Model names are set in `.env` and have no default in code, because free-tier models are retired often. | [ADR-0002](adr/0002-llm-selection-gemini-flash-with-openrouter-fallback.md) |
 | M2 | Free tiers have per-minute and per-day limits. Retries, back-off, the circuit breaker, small research limits and a per-user daily token budget keep the demo within them. | Zero-cost constraint. |
-| M3 | Free-tier providers may use submitted data to improve their services. Only fictional data is ever sent. A real bank would use paid no-training tiers or a private deployment. | Data protection. |
+| M3 | Free-tier providers may use submitted data to improve their services. OpenRouter's free models are only served by providers that may log prompts, which must be allowed in the account's privacy settings. Only fictional data is ever sent. A real bank would use paid no-training tiers or a private deployment. | Data protection. |
 | M4 | Embeddings (`multilingual-e5-large`) and re-ranking (`bge-reranker-v2-m3`) are Pinecone-hosted and count against the Pinecone free plan. | [ADR-0004](adr/0004-embeddings-and-bm25.md), [ADR-0010](adr/0010-reranking.md) |
+| M5 | A question normally costs three model calls (plan, search plan, answer). Routing after each agent is plain code, not a model call. | Keeps the demo inside free-tier daily limits and makes routing predictable. |
 
 ## Retrieval and research
 
 | # | Assumption | Reason |
 |---|---|---|
-| R1 | Hybrid weighting `alpha` starts at 0.5 and is tuned with the evaluation set (`make eval-retrieval`, 18 questions). Until the first run is recorded in [docs/evals](evals/README.md), 0.5 is an untested default. `alpha` must be above 0, so pure keyword search is not offered. | Dense and sparse scores have different scales. At 0 the dense query vector would be all zeros, which Pinecone does not accept. |
+| R1 | Hybrid weighting `alpha` is 0.5, checked with the evaluation set (`make eval-retrieval`, 18 questions; results in [docs/evals/retrieval.md](evals/retrieval.md)). Every tested value from 0.3 to 0.9 found a good document in the top 5 for all 18 questions; 0.9 ranked one question slightly higher. `alpha` must be above 0, so pure keyword search is not offered. | Dense and sparse scores have different scales. At 0 the dense query vector would be all zeros, which Pinecone does not accept. |
 | R2 | The RLM plan language has four functions (`search`, `filter_by`, `batch`, `fetch_section`). Research depth is limited to 3 and fan-out to 5. | Safety and free-tier quotas ([ADR-0011](adr/0011-rlm-python-search-plans-in-sandbox.md)). |
-| R3 | A citation is valid only if the cited `doc_id` and section were retrieved in the same run and the quoted text matches the chunk. | Guards against hallucinated citations. |
+| R3 | Answers cite numbered sources (`[2]`), and a citation is valid only if its number points to a chunk retrieved in the same run. Answers do not quote; checking that a claim matches its source is measured by the faithfulness evaluation (`feature/observability-evals`). | Guards against hallucinated citations. |
 | R4 | A search returns at most 3 chunks from one document (8 chunks in total by default). | Keeps several sources in the answer instead of one long document filling every slot. |
 | R5 | If some collections fail or time out, search returns what the others found and lists the missed collections. It fails only when every collection fails or the question cannot be embedded. | A partial answer that says what is missing is more useful than no answer. |
-| R6 | Until the retrieval agent exists (`feature/langgraph-agents`), the caller chooses the collections, and the default is all six. Query rewriting also arrives with the agent. | Both need the language model. |
+| R6 | The retrieval agent chooses the collections and rewrites the question with the language model. If the model is unavailable, it searches all six collections with the question as written. | A slower but complete search is better than no search. |
 | R7 | Retrieval and evaluation metrics count documents, not chunks. | What an answer needs is the right document; three chunks of one runbook are one source. |
 | R8 | The evaluation question set was written by the same person who wrote the documents. | It checks the search works as designed, not how it would do on real staff questions. A real project would collect questions from users. |
+
+## Agents
+
+| # | Assumption | Reason |
+|---|---|---|
+| AG1 | Until the research agent (`feature/rlm-research`) and the tool agent (`feature/python-sandbox`, `feature/mcp-server`) exist, research questions get one wider search (20 chunks) and enterprise-data questions are answered from the documents. The answer says so. | Every question type gets a useful, honest answer from the first agents branch on. |
+| AG2 | Refusals, out-of-scope replies, "nothing found" and "search unavailable" are fixed texts written in code, not generated. | They must be safe and consistent, and a model adds nothing to them. |
+| AG3 | A draft that fails the answer checks is rewritten once. If it fails again, the user gets the list of the most relevant sources instead. | Bounded cost and time; a bad answer is never shown. |
+| AG4 | The agents see the last 6 messages of the conversation (`AGENT_HISTORY_MESSAGES`). Summaries of longer threads come with `feature/memory`. | Enough for follow-up questions, small enough for free-tier limits. |
+| AG5 | Conversations are kept in memory for the life of the process until `feature/memory` adds the Postgres checkpointer. | Lets follow-ups work now, with no schema to migrate later. |
+| AG6 | "The last year" and similar phrases are resolved against the server's date, which is given to the model in the prompt. | Date filters need real dates; the model has no clock. |
 
 ## Memory
 
@@ -79,7 +91,7 @@ Where the assignment leaves something open, this file records the choice made an
 | # | Assumption | Reason |
 |---|---|---|
 | O1 | Alerting is out of scope for a localhost demo. Alerts would use: 5xx rate, p95 latency per endpoint, LLM fallback count, circuit breaker open, guardrail blocks per minute, 429 rate. | The metrics exist; only the alert rules and routing are missing. |
-| O2 | LangSmith tracing is on only when a key is set. User IDs in traces are pseudonymised and PII is masked before sending. | The app must work without LangSmith, and traces must be safe to share. |
+| O2 | LangSmith tracing is on only when `LANGSMITH_TRACING=true` and a key is set. User IDs in traces are pseudonymised (`feature/auth-rbac`) and PII is masked before sending (`feature/guardrails`). Until then traces hold the question as typed, so tracing is used with the fictional sample data only. | The app must work without LangSmith, and traces must be safe to share. |
 | O3 | Public LangSmith trace links in the README use dummy data only and stay shared until the review ends. | Deliverable requirement. |
 
 ## Trade-offs
@@ -93,4 +105,5 @@ Where the assignment leaves something open, this file records the choice made an
 | Keycloak vs hard-coded users | Real OIDC tokens and expiry | One more container, login step |
 | Docker Compose only | Same stack everywhere, one command | Image downloads on first start |
 | Small RLM plan language | Safe, testable | Less flexible plans |
+| Routing after each agent in code, not by the model | Predictable, testable, three model calls per question | The supervisor cannot improvise a new route; new routes are added in code |
 | Validator regenerates once | Bounded latency and cost | Some answers end with a safe fallback message instead of a retry loop |

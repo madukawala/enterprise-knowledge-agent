@@ -67,6 +67,9 @@ data/index/
 # The shared set (evals/datasets/retrieval.yaml) and the report from
 # `make eval-retrieval` (docs/evals/retrieval.md) are committed.
 evals/datasets/*.local.yaml
+# Local state of the LangGraph dev server (`langgraph dev`), if you use it
+# to look at the agent graph
+.langgraph_api/
 # Local Docker volume data, if bind-mounted
 .docker-data/
 # Logs

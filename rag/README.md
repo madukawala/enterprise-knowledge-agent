@@ -101,5 +101,5 @@ The change is recorded in [ADR-0004](../docs/adr/0004-embeddings-and-bm25.md).
 
 ## Not in this package yet
 
-- **Choosing collections and rewriting the question** need the language model, so the retrieval agent does them (`feature/langgraph-agents`). Until then the caller picks the collections; the default is all six.
+- **Choosing collections and rewriting the question** need the language model, so the retrieval agent does them ([agents/nodes/retrieval.py](../agents/nodes/retrieval.py)). Called directly, as `make search` does, the default is all six collections.
 - **Cleaning retrieved text** (hidden instructions, HTML, zero-width characters) comes with `feature/guardrails`.

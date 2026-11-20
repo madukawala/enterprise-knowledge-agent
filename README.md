@@ -14,9 +14,10 @@ The project is built step by step, one feature branch at a time, following the p
 - the project scaffold: settings, structured logging, error handling, a minimal API, the test harness and CI;
 - the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana;
 - the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection;
-- hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`.
+- hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`;
+- the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Gemini with OpenRouter as the fallback, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`.
 
-The agents, the chat UI, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API, search from the terminal and run the checks.
+The streaming chat API, the chat UI, the research and tool agents, the MCP server and the sandbox are added by the next branches. Until then, [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API, ask the agents from the terminal and run the checks.
 
 ## Contents
 
@@ -59,6 +60,7 @@ More diagrams, all in [docs/architecture](docs/architecture/README.md):
 | Diagram | What it shows |
 |---|---|
 | [Agent graph](docs/architecture/03-agent-graph.drawio.svg) | The supervisor, the specialist agents and how work moves between them |
+| [Agent graph, from the code](docs/architecture/03-agent-graph.generated.md) | The graph as built today, drawn by `make diagrams` |
 | [Search pipeline](docs/architecture/04-search-pipeline.md) | How documents are indexed and how a question becomes cited results |
 | [Recursive research](docs/architecture/05-rlm-research.md) | The six research steps, using the payment-failure outage example |
 | [Layered security](docs/architecture/06-security-layers.drawio.svg) | Every check a request and an answer pass through |
@@ -117,7 +119,7 @@ There are three roles. Permissions are checked in code before every route, tool 
 | Frontend | Streamlit |
 | Backend | FastAPI (async), Pydantic, structlog |
 | Agents | LangGraph |
-| Language models | Google Gemini Flash (main), Groq with Llama 3.3 70B (fallback) |
+| Language models | Google Gemini Flash (main), OpenRouter with a free non-Google model (fallback) |
 | Search | Pinecone hybrid index, `multilingual-e5-large` embeddings, BM25, `bge-reranker-v2-m3` re-ranking |
 | Identity | Keycloak |
 | Storage | PostgreSQL, Redis |
@@ -136,14 +138,13 @@ The reasons for each choice are recorded in [docs/adr](docs/adr/README.md).
 enterprise-knowledge-agent/
   api/            FastAPI app: routes, middleware, error handling, SSE streaming
   core/           Shared settings, structured logging and error types
-  agents/         LangGraph graph, supervisor and specialist agents, shared state
+  agents/         LangGraph graph, supervisor and specialist agents, shared state, prompts
   rag/            Search: chunk schema, BM25, embeddings, Pinecone index, filters, hybrid retrieval
   security/       Role matrix, authentication, guardrails, rate limiting
   ingestion/      Document parsing, chunking and indexing into Pinecone
   mcp_server/     MCP server with dummy enterprise data
   sandbox/        Python sandbox service
   ui/             Streamlit app and agent activity panel
-  prompts/        Prompt templates, kept out of the code
   data/           Sample Helix Bank documents (data/sample_docs) and ingestion output (data/index, not committed)
   evals/          Evaluation question sets and runners (retrieval hit rate and MRR)
   tests/          Unit, integration, graph, security, resilience and end-to-end tests
@@ -154,12 +155,12 @@ enterprise-knowledge-agent/
   compose.yaml    The full local stack; compose.dev.yaml adds live code reload
 ```
 
-Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `data/`, `evals/`, `ui/` (empty package), `infra/` and `tests/` exist. The `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work.
+Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `agents/`, `data/`, `evals/`, `ui/` (empty package), `infra/` and `tests/` exist. The `agents/`, `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work. Prompts are Markdown files in `agents/prompts/`, kept out of the code.
 
 The code is one Python project with one `pyproject.toml` and one lock file, with two deliberate boundaries:
 
 - The sandbox has its own small dependency file (`sandbox/requirements.txt`), so its image contains only data-analysis libraries, with no project code and no secrets.
-- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). Three more contracts keep `core/` at the bottom layer, and keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services.
+- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`). Four more contracts keep `core/` at the bottom layer, keep `rag/` and `security/` from importing the agents above them, and keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services.
 
 ## Getting started
 
@@ -170,7 +171,7 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 - Python 3.12 and [uv](https://docs.astral.sh/uv/), only if you want to run tests or tools outside Docker
 - Free accounts and API keys for:
   - Google AI Studio (Gemini)
-  - Groq
+  - OpenRouter (the fallback model)
   - Pinecone
   - LangSmith (optional; without it the app works but sends no traces)
 
@@ -215,6 +216,15 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
    ```bash
    make search Q="why do card payments fail?" ROLE=analyst
    ```
+
+   With `GEMINI_API_KEY` (and ideally `OPENROUTER_API_KEY` as the fallback), each with its model, in `.env`, ask the agents. You get an answer with citations and a "How I got this answer" section:
+
+   ```bash
+   make ask Q="What should I do when the PayHub connection pool runs out?" ROLE=viewer
+   make chat ROLE=analyst    # a conversation; follow-up questions work
+   ```
+
+   To see each run in LangSmith, also set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. See [agents/README.md](agents/README.md).
 
 5. Open the app at <http://localhost:8501> and log in with one of the test users below. Use a different user to try each role.
 
@@ -292,6 +302,8 @@ Run `make` on its own to list every task. The main ones:
 | `make ingest-check` / `make ingest` | Check the sample documents, or load them into Pinecone |
 | `make search Q="..." ROLE=analyst` | Search the index as a role and print the ranked, cited chunks |
 | `make eval-retrieval` | Hit rate and MRR for several alpha values, saved to `docs/evals/retrieval.md` |
+| `make ask Q="..." ROLE=analyst` / `make chat` | Ask the agents one question, or have a conversation, in the terminal |
+| `make diagrams` | Redraw the agent graph from the code (`docs/architecture/03-agent-graph.generated.md`) |
 
 The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API image.
 
@@ -306,7 +318,7 @@ Dependencies are managed with uv. Add one with `uv add <package>` (or `uv add --
 
 ## Running the tests
 
-The tests do not call the real language models, so they are free and give the same result every run.
+The tests do not call the real language models: a scripted fake model plays them, so the tests are free and give the same result every run.
 
 ```bash
 make test            # unit, integration, graph, security and resilience tests, with coverage

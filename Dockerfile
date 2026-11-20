@@ -44,6 +44,7 @@ COPY api ./api
 COPY core ./core
 COPY security ./security
 COPY rag ./rag
+COPY agents ./agents
 # Ingestion runs on the host (`make ingest`), but it is part of the same
 # Python package, so it is copied to keep the build complete. It is small
 # and needs no secrets inside the image.

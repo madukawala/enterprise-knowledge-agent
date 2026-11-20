@@ -48,7 +48,7 @@ The query side is built in [rag/retrieval.py](../../rag/retrieval.py) (see [rag/
 |---|---|
 | Permission filter, department / type / severity / date / document filters | Built ([rag/filters.py](../../rag/filters.py)) |
 | Encode, weight, query namespaces in parallel, merge, re-rank, citations | Built |
-| Choose namespaces by intent, rewrite the query | With the retrieval agent (`feature/langgraph-agents`); until then the caller picks the namespaces, all six by default |
+| Choose namespaces by intent, rewrite the query, turn "last year" into dates | Built, in the retrieval agent ([agents/nodes/retrieval.py](../../agents/nodes/retrieval.py)). If the model is unavailable, all six namespaces are searched with the question as written |
 | Clean chunks | With `feature/guardrails` |
 
 If some namespaces fail or time out, the others still answer and the result lists what was missed. Search fails only when every namespace fails or the question cannot be embedded. Cancelling a search (for example the user closing the page) cancels every running query.
