@@ -43,11 +43,11 @@ Where the assignment leaves something open, this file records the choice made an
 
 | # | Assumption | Reason |
 |---|---|---|
-| M1 | Gemini Flash (free tier, `gemini-3.6-flash`) is the primary LLM, and OpenRouter with a free non-Google model (`nvidia/nemotron-3.5-super-vl:free`, about 50 requests a day) is the fallback. Model names are set in `.env` and have no default in code, because free-tier models are retired often. | [ADR-0002](adr/0002-llm-selection-gemini-flash-with-openrouter-fallback.md) |
-| M2 | Free tiers have per-minute and per-day limits. Retries, back-off, the circuit breaker, small research limits and a per-user daily token budget keep the demo within them. | Zero-cost constraint. |
-| M3 | Free-tier providers may use submitted data to improve their services. OpenRouter's free models are only served by providers that may log prompts, which must be allowed in the account's privacy settings. Only fictional data is ever sent. A real bank would use paid no-training tiers or a private deployment. | Data protection. |
+| M1 | Claude Haiku (`claude-haiku-5-5`, paid per token) is the main LLM, and Gemini Flash (`gemini-3.6-flash`, free tier) is the backup. No local model is used. Model names are set in `.env` and have no default in code, because models are renamed and retired often. Until 21 November 2026 Gemini was the main model and a free OpenRouter model the backup; one day of testing used up both free daily limits. | [ADR-0017](adr/0017-claude-haiku-primary-gemini-backup.md) |
+| M2 | Claude is the only paid part of the system. It is set up for low cost: no thinking, low effort, a 2,000-token cap per reply, JSON output instead of tool calls, and a prompt cache for the rules sent with every question. Measured: about US$0.001 for a document question and US$0.004 for deep research. Retries, back-off, the circuit breaker, small research limits and a per-user daily token budget also cap the spend, and keep Gemini's free tier within its limits when it takes over. | Keep the cost of the project to a few US dollars. |
+| M3 | Anthropic does not use API data to train its models by default. Gemini's free tier may use submitted data to improve Google's services. Only fictional data is ever sent. A real bank would use paid no-training tiers on both, or a private deployment. | Data protection. |
 | M4 | Embeddings (`multilingual-e5-large`) and re-ranking (`bge-reranker-v2-m3`) are Pinecone-hosted and count against the Pinecone free plan. | [ADR-0004](adr/0004-embeddings-and-bm25.md), [ADR-0010](adr/0010-reranking.md) |
-| M5 | A question normally costs three model calls (plan, search plan, answer). Routing after each agent is plain code, not a model call. | Keeps the demo inside free-tier daily limits and makes routing predictable. |
+| M5 | A question normally costs three model calls (plan, search plan, answer). Routing after each agent is plain code, not a model call. | Keeps the cost per question low and predictable, and makes routing predictable. |
 
 ## Retrieval and research
 
@@ -79,7 +79,7 @@ Where the assignment leaves something open, this file records the choice made an
 |---|---|---|
 | ST1 | Streamed tokens are a preview. The final answer is the `response_end` event, and a `response_start` tells the client to clear the text (a rewrite, or a model failing half-way). | The validator checks the whole answer, so it can only approve it at the end. Holding every token until then would make the user wait 10 to 40 seconds for the first word ([ADR-0013](adr/0013-streaming-with-server-sent-events.md)). |
 | ST2 | The role and the conversation owner come from the Keycloak access token in the `Authorization` header. (Before `feature/auth-rbac`, an `X-Dev-Role` header stood in for login; it has been removed.) | The role is never accepted from the request body, a header the client chooses, or the conversation. |
-| ST3 | One whole answer may take at most 120 seconds (`CHAT_TIMEOUT_SECONDS`); a keep-alive line is sent after 15 quiet seconds. | A normal question takes 10 to 40 seconds on the free tiers, with a 30-second limit per model call. Anything slower is stuck. |
+| ST3 | One whole answer may take at most 120 seconds (`CHAT_TIMEOUT_SECONDS`); a keep-alive line is sent after 15 quiet seconds. | A normal question takes about 10 seconds with Claude (about 25 for deep research) and up to 40 seconds on Gemini's free tier, with a 30-second limit per model call. Anything slower is stuck. |
 | ST4 | A conversation answers one question at a time; a second one gets 409. | Two runs writing to one conversation would mix up its history. The chat UI turns its input into a Stop button while an answer streams, so it never sends a second question. |
 | ST5 | When the client disconnects, the run is cancelled at once, even mid-answer. Nothing is saved for the half-finished question. | No quota is spent on answers nobody reads. Resuming abandoned answers is not in scope. |
 
@@ -142,7 +142,7 @@ Where the assignment leaves something open, this file records the choice made an
 
 | Trade-off | Chosen | Given up |
 |---|---|---|
-| Cloud free-tier LLMs vs local models | Better models, no laptop RAM used, real cross-provider failover | Needs internet; provider quotas |
+| Hosted LLMs (paid Claude, free Gemini backup) vs local models | Better models, no laptop RAM used, real failover between two companies | Needs internet; a small cost per question for Claude; Gemini's free limits when it takes over |
 | Plain LangGraph vs prebuilt agents | Full control of routing, role checks and streaming events | More code to write |
 | One hybrid index vs two indexes + RRF | True score combination, one query per namespace | `alpha` must be tuned |
 | Pinecone Local plus in-memory fakes vs real Pinecone in CI | Free, fast, no account or quota in CI; the emulator checks the real filter syntax, namespaces, the async client and re-running ingestion | The emulator ignores sparse vectors and only speaks the older control-plane API, so the hybrid score and the hosted models (embeddings, re-ranker) are checked only by the live tests |

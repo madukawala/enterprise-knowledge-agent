@@ -44,11 +44,38 @@ NOT_CONFIGURED = (
 )
 
 
+class ToolArguments(BaseModel):
+    """Every argument any tool takes. The model fills in only the ones its
+    tool has; `check_arguments` then refuses any that belong to another tool.
+
+    Listed field by field rather than as a free-form dict, because models
+    that return strict JSON (Claude) cannot add keys a schema does not name.
+    """
+
+    name: str | None = Field(default=None, description="find_person: the person's name.")
+    service: str | None = Field(
+        default=None, description="service_owner and list_incidents: the service name."
+    )
+    # Plain text on purpose: values are checked in one place, by
+    # `check_arguments`, which reports a wrong one to the user.
+    status: str | None = Field(
+        default=None,
+        description="list_incidents: only this status: open, monitoring or resolved.",
+    )
+    limit: int | None = Field(default=None, description="list_incidents: at most this many.")
+
+    def given(self) -> dict[str, Any]:
+        """Only the arguments the model filled in."""
+        return self.model_dump(exclude_none=True)
+
+
 class ToolCall(BaseModel):
     tool: Literal["find_person", "service_owner", "list_incidents"] = Field(
         description="Which tool to call."
     )
-    arguments: dict[str, Any] = Field(default_factory=dict, description="The tool's arguments.")
+    arguments: ToolArguments = Field(
+        default_factory=ToolArguments, description="The tool's arguments."
+    )
 
 
 class ToolPlan(BaseModel):
@@ -99,7 +126,7 @@ class ToolsAgent(AgentNode):
             update["steps"] = [self.step("None of the enterprise data tools fits this question.")]
             return update
 
-        results = await asyncio.gather(*(tools.call(c.tool, c.arguments) for c in calls))
+        results = await asyncio.gather(*(tools.call(c.tool, c.arguments.given()) for c in calls))
         records = [
             ToolRecord(
                 tool=r.tool,

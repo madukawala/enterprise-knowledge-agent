@@ -51,7 +51,7 @@ Every event's `data` is one line of JSON with `seq` (1, 2, 3, ... within the str
 | `node_start` / `node_end` | `node`; at the end also `duration_ms`, `status` (`ok` / `error`), `summary` | "retrieval: 6.7 s, ok. Searched runbooks for ..." |
 | `retrieval` | `query`, `collections`, `filters`, `failed_collections`, `candidates`, `hits`, `rerank`, `alpha`, `took_ms`, `relaxed` | "runbooks, architecture: 40 matches, 8 after re-ranking" |
 | `validation` | `stage` (`input` / `output`), `passed`, `issues`, `attempt` | "Input checks passed", "Citation check passed" |
-| `degraded` | `dependency` (`documents` / `language_model`), `message` | "The main model did not answer, so openrouter / ... was used" |
+| `degraded` | `dependency` (`documents` / `language_model`), `message` | "The main model did not answer, so gemini / ... was used" |
 | `response_start` | `attempt`, `reason` (`first` / `rewrite` / `model_switch`) | Clears the answer shown so far |
 | `token` | `text` | The answer, word by word |
 | `response_end` | `kind`, `text`, `markdown`, `citations`, `steps`, `limits`, `written_by`, `llm_calls`, `duration_ms` | The final answer with its sources |

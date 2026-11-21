@@ -55,11 +55,11 @@ def test_check_lines_name_the_stage_and_the_attempt() -> None:
 
 def test_model_calls_are_summed_and_listed() -> None:
     calls = [
-        {"purpose": "supervisor", "provider": "gemini", "model": "flash", "input_tokens": 1000},
+        {"purpose": "supervisor", "provider": "anthropic", "model": "haiku", "input_tokens": 1000},
         {
             "purpose": "answer",
-            "provider": "openrouter",
-            "model": "free",
+            "provider": "gemini",
+            "model": "flash",
             "input_tokens": 1140,
             "output_tokens": 310,
             "duration_ms": 2500,
@@ -71,7 +71,7 @@ def test_model_calls_are_summed_and_listed() -> None:
     assert fmt.tokens_line([]) == "No model calls"
     assert fmt.call_rows(calls)[1] == {
         "purpose": "answer",
-        "model": "openrouter / free",
+        "model": "gemini / flash",
         "tokens in": 1140,
         "tokens out": 310,
         "time": "2.5 s",

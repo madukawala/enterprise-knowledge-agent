@@ -1,6 +1,6 @@
 # evals
 
-Quality measurements that are run by hand, because they use real API quota. Nothing in the app imports this folder (an import-linter contract checks it).
+Quality measurements that are run by hand, because they call the real models (Claude is paid per token). Nothing in the app imports this folder (an import-linter contract checks it).
 
 | File | What it is |
 |---|---|
@@ -30,11 +30,11 @@ For each question it measures:
 
 The latest results are in [docs/evals/answers.md](../docs/evals/answers.md).
 
-**Why not Ragas.** Ragas needs several model calls per question for each metric, and its embeddings model, which does not fit the free model tiers this project runs on. These measures are simple and cheap, and the grounding judge covers faithfulness when it is wanted.
+**Why not Ragas.** Ragas needs several model calls per question for each metric, and its embeddings model, which would multiply the cost of every evaluation run. These measures are simple and cheap, and the grounding judge covers faithfulness when it is wanted.
 
 **With LangSmith** (`--langsmith`, and `LANGSMITH_TRACING=true` with a key): every score is attached to the question's trace as feedback (`eval_kind_correct`, `eval_citation_recall`, `eval_mentions`, `eval_grounded`), next to the users' own thumbs up and down (`user_score`), so quality can be followed over time in one place.
 
-**Cost:** about 3 model calls per question, one more with `--judge`. The free tiers allow it, but Gemini's per-minute limit may move some calls to OpenRouter; the report says which models ran.
+**Cost:** about 3 model calls per question, one more with `--judge`. With `claude-haiku-5-5` a run of the 8 cases costs about one US cent. If Claude fails or is rate limited, some calls move to Gemini; the report says which models ran.
 
 ## Retrieval: hit rate and MRR
 

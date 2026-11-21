@@ -4,8 +4,8 @@ The picture is [07-failure-handling.drawio.svg](07-failure-handling.drawio.svg).
 
 | Failure | What happens | What the user sees | Proven by |
 |---|---|---|---|
-| Gemini fails or times out | The gateway moves to OpenRouter for that call; the provider's SDK has already retried once with back-off | The answer, with "the main model did not answer, so OpenRouter was used" in the activity panel | `tests/unit/test_llm_gateway.py` |
-| Gemini keeps failing, or answers "rate limited" | Its circuit breaker opens: Gemini is skipped for 30 seconds, then one probe call decides whether to use it again. A 429 opens the breaker at once | Answers keep coming from OpenRouter without waiting for Gemini to time out; `llm_breaker_state{provider="gemini"}` shows 2 | `tests/resilience/test_llm_failover.py` |
+| Claude fails or times out | The gateway moves to Gemini for that call; the provider's SDK has already retried once with back-off | The answer, with "the main model did not answer, so gemini / ... was used" in the activity panel | `tests/unit/test_llm_gateway.py` |
+| Claude keeps failing, or answers "rate limited" | Its circuit breaker opens: Claude is skipped for 30 seconds, then one probe call decides whether to use it again. A 429 opens the breaker at once | Answers keep coming from Gemini without waiting for Claude to time out; `llm_breaker_state{provider="anthropic"}` shows 2 | `tests/resilience/test_llm_failover.py` |
 | Both providers down | Every node degrades: the supervisor uses its default plan, the answer lists the most relevant sources | "I couldn't write a full answer just now. These documents look most relevant ..."; with every breaker open this comes at once | `tests/graph/test_failure_containment.py`, `tests/resilience/test_llm_failover.py` |
 | A model answers in the wrong shape | That provider's answer is dropped and the next one is tried; this does not count against the breaker | Nothing, unless every provider fails | `tests/resilience/test_llm_failover.py`, `tests/unit/test_llm_gateway.py` |
 | Pinecone down or slow | The search is retried once; then the answer says document search is unavailable | "Document search is unavailable right now" | `tests/graph/test_failure_containment.py` |
@@ -37,4 +37,4 @@ docker compose stop keycloak    # signed-in users carry on with the cached keys
 docker compose start sandbox redis keycloak
 ```
 
-To see the model failover, set `GEMINI_API_KEY` to a wrong value in `.env` and restart the API: every answer comes from OpenRouter, the activity panel says so, and after five failures in a minute `llm_breaker_state{provider="gemini"}` on `/metrics` shows the breaker open.
+To see the model failover, set `ANTHROPIC_API_KEY` to a wrong value in `.env` and restart the API: every answer comes from Gemini, the activity panel says so, and after five failures in a minute `llm_breaker_state{provider="anthropic"}` on `/metrics` shows the breaker open.

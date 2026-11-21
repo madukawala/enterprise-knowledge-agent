@@ -108,6 +108,8 @@ jobs:
           docker build -t enterprise-knowledge-agent/sandbox:ci sandbox
       - name: Scan the API image for known vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: trivy-secret.yaml
         with:
           image-ref: enterprise-knowledge-agent/api:ci
           severity: HIGH,CRITICAL
@@ -115,6 +117,8 @@ jobs:
           exit-code: "1"
       - name: Scan the UI image for known vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: trivy-secret.yaml
         with:
           image-ref: enterprise-knowledge-agent/ui:ci
           severity: HIGH,CRITICAL
@@ -122,6 +126,8 @@ jobs:
           exit-code: "1"
       - name: Scan the sandbox image for known vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: trivy-secret.yaml
         with:
           image-ref: enterprise-knowledge-agent/sandbox:ci
           severity: HIGH,CRITICAL

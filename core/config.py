@@ -32,6 +32,13 @@ class LogFormat(StrEnum):
     """Coloured, human-friendly lines for local development."""
 
 
+# The `.env` names of each provider's key and model, for error messages.
+_LLM_VARIABLES = {
+    "anthropic": ("ANTHROPIC_API_KEY", "CLAUDE_MODEL"),
+    "gemini": ("GEMINI_API_KEY", "GEMINI_MODEL"),
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -107,24 +114,31 @@ class Settings(BaseSettings):
     # How many merged candidates are sent to the re-ranker.
     rerank_candidates: int = Field(default=30, ge=1, le=100)
 
-    # --- Language models (ADR-0002) ---
-    # Gemini answers first. If it fails, times out or returns something
-    # unusable, OpenRouter takes over. One key is enough to run the agents;
-    # with both, a Gemini outage does not stop the assistant.
+    # --- Language models (ADR-0017) ---
+    # Claude answers first. If it fails, times out or returns something
+    # unusable, Gemini takes over. One key is enough to run the agents;
+    # with both, an outage at one company does not stop the assistant.
     #
-    # Model names have no default on purpose. Free-tier models are retired
+    # Model names have no default on purpose. Models are renamed and retired
     # often, and a name kept in code goes stale without anyone noticing. So
     # each provider with a key must also have its model set in `.env`
     # (`.env.example` lists the recommended ones); see
     # `_every_provider_has_a_model` below.
+    anthropic_api_key: SecretStr | None = None
+    claude_model: str | None = None
+    # Claude is paid per token, so it is set up to spend as little as
+    # possible (agents/llm.py): no thinking, low effort, and a cap on the
+    # length of every reply. The longest reply the agents need is an
+    # answer of a few paragraphs, well under 2,000 tokens.
+    anthropic_max_tokens: int = Field(default=2000, ge=256, le=16000)
+    # How much work Claude puts into each reply. "low" is the cheapest and
+    # is enough for routing, search plans and answers from given sources.
+    anthropic_effort: Literal["low", "medium", "high"] = "low"
     gemini_api_key: SecretStr | None = None
     gemini_model: str | None = None
-    # OpenRouter gives one key for many hosted models; `:free` models cost
-    # nothing (about 50 requests a day). Use a non-Google model, so a Google
-    # outage does not take out the fallback too.
-    openrouter_api_key: SecretStr | None = None
-    openrouter_model: str | None = None
-    # Low, so routing and answers stay close to the sources and repeatable.
+    # Gemini only. Low, so routing and answers stay close to the sources.
+    # Claude is left at its own default, because the current Claude models
+    # refuse any other temperature.
     llm_temperature: float = Field(default=0.2, ge=0, le=1)
     # Time limit for one model call, and retries inside one provider before
     # moving on to the next one.
@@ -275,11 +289,11 @@ class Settings(BaseSettings):
         "postgres_url",
         "redis_url",
         "pinecone_api_key",
+        "anthropic_api_key",
         "gemini_api_key",
-        "openrouter_api_key",
         "langsmith_api_key",
+        "claude_model",
         "gemini_model",
-        "openrouter_model",
         "sandbox_url",
         "mcp_url",
         mode="before",
@@ -287,7 +301,7 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_means_not_set(cls, value: object) -> object:
         # `.env.example` lists every key with an empty value, e.g.
-        # `OPENROUTER_API_KEY=`. Treat that as "not set", not as an empty key.
+        # `GEMINI_API_KEY=`. Treat that as "not set", not as an empty key.
         if isinstance(value, str) and not value.strip():
             return None
         return value
@@ -300,19 +314,20 @@ class Settings(BaseSettings):
         at startup with a clear message, not on a user's first question. A
         provider without a key is off, and its model is not needed.
         """
-        missing = [
-            f"{name.upper()}_API_KEY is set, so {name.upper()}_MODEL must be set too"
-            for name, key, model in self._llm_settings()
-            if key is not None and model is None
-        ]
+        missing = []
+        for name, key, model in self._llm_settings():
+            if key is not None and model is None:
+                key_var, model_var = _LLM_VARIABLES[name]
+                missing.append(f"{key_var} is set, so {model_var} must be set too")
         if missing:
             raise ValueError("; ".join(missing) + ". See .env.example for the recommended models.")
         return self
 
     def _llm_settings(self) -> list[tuple[str, SecretStr | None, str | None]]:
+        # The order here is the failover order.
         return [
+            ("anthropic", self.anthropic_api_key, self.claude_model),
             ("gemini", self.gemini_api_key, self.gemini_model),
-            ("openrouter", self.openrouter_api_key, self.openrouter_model),
         ]
 
     def llm_providers(self) -> list[tuple[str, SecretStr, str]]:

@@ -20,7 +20,7 @@ sequenceDiagram
     actor A as Analyst
     participant S as Supervisor
     participant R as Research agent
-    participant L as LLM (Gemini; OpenRouter fallback)
+    participant L as LLM (Claude; Gemini backup)
     participant X as Python sandbox
     participant C as Document catalog
     participant P as Pinecone

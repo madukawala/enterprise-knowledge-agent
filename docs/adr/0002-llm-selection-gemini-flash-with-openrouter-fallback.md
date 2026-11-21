@@ -1,6 +1,6 @@
 # ADR-0002: Gemini Flash as the main LLM, OpenRouter as the fallback
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0017](0017-claude-haiku-primary-gemini-backup.md) (Claude Haiku as the main model, Gemini as the backup, OpenRouter removed)
 - **Date:** 2026-11-20 (fallback provider and model names updated 2026-11-21)
 
 ## Context

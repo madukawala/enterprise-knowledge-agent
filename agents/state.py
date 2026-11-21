@@ -106,7 +106,7 @@ class LLMCall(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     purpose: str  # supervisor, search_plan, answer
-    provider: str  # gemini, openrouter
+    provider: str  # anthropic, gemini
     model: str
     input_tokens: int = 0
     output_tokens: int = 0

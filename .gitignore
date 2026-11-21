@@ -130,3 +130,18 @@ tokens.txt
 # client secrets. The shared realm is infra/keycloak/realm-helix.json.
 realm-export*.json
 infra/keycloak/*-export.json
+
+# ---------------------------------------------------------------
+# Language model providers (Claude, Gemini)
+# ---------------------------------------------------------------
+# Usage and cost exports downloaded from the Anthropic Console or Google
+# AI Studio show the account's spend and key names. Keep them local.
+anthropic-usage*.csv
+anthropic-cost*.csv
+claude_api_cost*.csv
+claude_api_tokens*.csv
+gemini-usage*.csv
+# Request and response dumps saved while debugging a model call can hold
+# whole prompts, including retrieved document text.
+llm-dumps/
+*.llm-dump.json

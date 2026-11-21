@@ -27,7 +27,7 @@ This is the graph built today. [docs/architecture/03-agent-graph.generated.md](.
 | [nodes/response.py](nodes/response.py) | Writes the answer with citations, in the bank's voice |
 | [nodes/validator.py](nodes/validator.py) | Checks the citations and the answer's shape, then finishes the answer |
 | [nodes/base.py](nodes/base.py) | What every node shares: dependencies, timing and failure containment |
-| [llm.py](llm.py) | The model gateway: Gemini first, then OpenRouter if Gemini fails, with a time limit on every call |
+| [llm.py](llm.py) | The model gateway: Claude first, then Gemini if Claude fails, with a time limit on every call. Claude is set up for low cost |
 | [context.py](context.py) and [prompts/](prompts/) | The prompts. Rules go in the system message; documents and the conversation go in tagged blocks |
 | [service.py](service.py) | `AgentService.stream()`: runs one question and yields its events as they happen; `ask()` runs it to the end and returns the answer and what happened |
 | [events.py](events.py) | The live events of a run (node started, search done, token, final answer, ...), as the activity panel gets them |
@@ -80,7 +80,7 @@ connections [1]. ...
 **How I got this answer**
 - Understood the request as document question. Plan: Search runbooks; Answer with citations.
 - Searched runbooks, incidents for "PayHub database connection pool exhausted". Found 40 matches and kept 8 after re-ranking.
-- Wrote the answer from 8 sources with gemini / gemini-3.6-flash.
+- Wrote the answer from 8 sources with anthropic / claude-haiku-5-5.
 - Checked that the cited source was retrieved in this run: passed.
 ```
 
@@ -108,7 +108,7 @@ One failing agent never breaks the run. Each node writes its failure to its own 
 | Some collections | An answer from the others, naming the missed collections |
 | The re-ranker | Results in hybrid order, with a note |
 | The model, while answering | The most relevant sources, listed |
-| Gemini only | The same answer from the fallback provider; `llm_calls` shows the switch |
+| Claude only | The same answer from the backup provider (Gemini); `llm_calls` shows the switch |
 | A bug inside any node | The node's safe fallback. The traceback is logged, `agent_node_errors_total{kind="internal"}` goes up, and the input guard fails closed (refuses) |
 | A routing loop | The recursion limit (30 steps) stops it, and the user gets the source list |
 
@@ -116,13 +116,32 @@ One failing agent never breaks the run. Each node writes its failure to its own 
 
 ## Language models
 
-[llm.py](llm.py) gives the agents two calls: `structured(schema, ...)` for a filled-in Pydantic model, and `text(...)` for a reply. For each call it tries the providers in order: Gemini, then OpenRouter. Only providers with a key are used.
+[llm.py](llm.py) gives the agents two calls: `structured(schema, ...)` for a filled-in Pydantic model, and `text(...)` for a reply. For each call it tries the providers in order: Claude, then Gemini. Only providers with a key are used.
 
-Each provider's model is chosen in `.env` (`GEMINI_MODEL`, `OPENROUTER_MODEL`), and the code has no default. Free-tier models are retired often, and a name kept in code would go stale without anyone noticing. A key without its model stops the app at startup with a message naming the missing setting. `.env.example` lists the recommended models: `gemini-3.6-flash` and the free `nvidia/nemotron-3.5-super-vl:free`.
+Each provider's model is chosen in `.env` (`CLAUDE_MODEL`, `GEMINI_MODEL`), and the code has no default. Models are renamed and retired often, and a name kept in code would go stale without anyone noticing. A key without its model stops the app at startup with a message naming the missing setting. `.env.example` lists the recommended models: `claude-haiku-5-5` and `gemini-3.6-flash`.
 
- OpenRouter is reached through its OpenAI-compatible API. An error, a timeout (`LLM_TIMEOUT_SECONDS`) or a reply that does not fit the schema moves the call on to the next provider. Only when every provider fails do the agents see `LLMUnavailableError`. One key is enough to run; with two, a Gemini outage does not stop the assistant.
+An error, a timeout (`LLM_TIMEOUT_SECONDS`) or a reply that does not fit the schema moves the call on to the next provider. Only when every provider fails do the agents see `LLMUnavailableError`. One key is enough to run; with two, an outage at one company does not stop the assistant.
 
-The OpenRouter model was chosen by trying the free, non-Google models that support structured output with the real supervisor and search-plan prompts: it filled both correctly in 2 to 4 seconds. Free OpenRouter models allow about 50 requests a day, roughly 16 questions, which is enough for a fallback but not for a main model. Models answer slightly differently. For example, one may decline a question another answers partly, so the answer prompt says when to answer in part and when to reply NOT_FOUND, and the validator checks every answer the same way.
+### Keeping the cost of Claude low
+
+Claude is the only paid service, so the gateway sets it up to spend as little as possible ([ADR-0017](../docs/adr/0017-claude-haiku-primary-gemini-backup.md)):
+
+| What | How | Effect |
+|---|---|---|
+| Cheapest model | `claude-haiku-5-5`, US$0.10 per million input tokens and US$0.50 per million output tokens | Routing, search plans and answers from sources do not need a bigger model |
+| No thinking, low effort | `thinking` off and `ANTHROPIC_EFFORT=low` | No hidden reasoning tokens, which are billed as output |
+| A cap on every reply | `ANTHROPIC_MAX_TOKENS=2000` | A runaway reply cannot cost more |
+| JSON output for filled-in models | `with_structured_output(..., method="json_schema")` | The reply always fits the schema; 12% fewer input and 40% fewer output tokens than a tool call on the supervisor prompt |
+| Prompt cache | The system message (shared rules and the agent's task) is marked for Claude's cache | The same rules go with every question; cached reads cost a tenth of the price. The question and sources come after it and are never cached |
+
+Measured with `claude-haiku-5-5`: a document question used 3 calls and about 6,400 tokens (about US$0.001); a deep research question used 6 calls and about 31,000 tokens (about US$0.004). The per-user daily token budget ([ADR-0015](../docs/adr/0015-rate-limiting.md)) caps the spend per person.
+
+Two things to know when changing the prompts or schemas:
+
+- Claude runs at its default temperature, because the current Claude models refuse any other value. `LLM_TEMPERATURE` applies to Gemini only.
+- Strict JSON output cannot carry a free-form dictionary: the model may only use the keys the schema names. That is why the tools agent lists every tool argument as its own field (`ToolArguments` in [nodes/tools.py](nodes/tools.py)).
+
+Models answer slightly differently. For example, one may decline a question another answers partly, so the answer prompt says when to answer in part and when to reply NOT_FOUND, and the validator checks every answer the same way.
 
 A question normally costs three model calls: the plan, the search plan and the answer. Small talk costs two, and out-of-scope requests one.
 
@@ -176,7 +195,7 @@ make chat ROLE=analyst      # follow-up questions in one conversation; an empty 
 make diagrams               # redraw docs/architecture/03-agent-graph.generated.md
 ```
 
-This needs at least one model key in `.env` (`GEMINI_API_KEY` or `OPENROUTER_API_KEY`, each with its model), and the index from `make ingest`. Without the index, the agents still run and say document search is unavailable. As with `make search`, `ROLE` is for local testing only. In the app the role comes from the login token.
+This needs at least one model key in `.env` (`ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, each with its model), and the index from `make ingest`. Without the index, the agents still run and say document search is unavailable. As with `make search`, `ROLE` is for local testing only. In the app the role comes from the login token.
 
 After the answer, the command prints one line on how the run went: the nodes in order, the models used with call and token counts, the time taken and the request ID.
 

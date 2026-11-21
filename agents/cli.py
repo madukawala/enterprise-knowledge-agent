@@ -4,7 +4,7 @@
     make chat ROLE=viewer          # several questions in one conversation
     uv run python -m agents.cli --help
 
-Needs GEMINI_API_KEY or OPENROUTER_API_KEY, and the Pinecone index from
+Needs ANTHROPIC_API_KEY or GEMINI_API_KEY, and the Pinecone index from
 `make ingest`. Without the index, the agents still run and answer that
 document search is unavailable.
 

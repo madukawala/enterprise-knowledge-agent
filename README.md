@@ -15,7 +15,7 @@ The project is built step by step, one feature branch at a time, following the p
 - the Docker Compose stack: the API, Postgres, Redis and Keycloak, with health checks, hardened containers, an internal network, an image scan in CI, and optional Prometheus and Grafana;
 - the sample documents and ingestion: 70 Helix Bank documents in six collections, and `make ingest`, which chunks them and loads dense and BM25 vectors into one Pinecone namespace per collection;
 - hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`;
-- the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Gemini with OpenRouter as the fallback, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`;
+- the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Claude Haiku with Gemini as the backup, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`;
 - the streaming chat API: `POST /chat` streams the answer token by token, together with live events for the activity panel (each agent starting and finishing, the plan, the search, the checks, anything degraded). A client that disconnects stops the run, every run has a time limit, and conversations continue with follow-up questions. Watch it with `make stream`;
 - the chat UI (Streamlit): the conversation on the left and the agent activity panel on the right, updated live as the answer streams in, with sources under each answer, a Stop button that cancels the agents, and follow-up questions. Open it at <http://localhost:8501> after `make up`, or run it with `make run-ui`;
 - login and role checks: users sign in with Keycloak, and the API checks every access token itself (signature, issuer, audience, expiry). One deny-by-default role matrix decides what each role may do, for API routes, the agents' choice of tools and the document search. The UI shows the user's name and role and only the tools that role may use. Conversations belong to the signed-in user;
@@ -57,7 +57,7 @@ The project is built step by step, one feature branch at a time, following the p
 
 ## Architecture
 
-The system runs on one machine with Docker Compose. Only the language models, the vector database and tracing are cloud services, all on free tiers.
+The system runs on one machine with Docker Compose. Only the language models, the vector database and tracing are cloud services. All of them are on free tiers except the main language model, Claude Haiku, which costs about a tenth of a US cent per question ([ADR-0017](docs/adr/0017-claude-haiku-primary-gemini-backup.md)).
 
 ![Containers and deployment](docs/architecture/02-containers.drawio.svg)
 
@@ -131,7 +131,7 @@ The table lives in one place in code, [security/policies.py](security/policies.p
 | Frontend | Streamlit |
 | Backend | FastAPI (async), Pydantic, structlog |
 | Agents | LangGraph |
-| Language models | Google Gemini Flash (main), OpenRouter with a free non-Google model (fallback) |
+| Language models | Anthropic Claude Haiku (main, set up for low cost), Google Gemini Flash on its free tier (backup) |
 | Search | Pinecone hybrid index, `multilingual-e5-large` embeddings, BM25, `bge-reranker-v2-m3` re-ranking |
 | Identity | Keycloak |
 | Storage | PostgreSQL, Redis |
@@ -181,11 +181,13 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 - Docker Desktop, with at least 6–8 GB of memory assigned to it
 - Git and `make`
 - Python 3.12 and [uv](https://docs.astral.sh/uv/), only if you want to run tests or tools outside Docker
-- Free accounts and API keys for:
-  - Google AI Studio (Gemini)
-  - OpenRouter (the fallback model)
-  - Pinecone
-  - LangSmith (optional; without it the app works but sends no traces)
+- API keys for:
+  - Anthropic (Claude, the main model). This is the only paid key: add a few US dollars of credit, which is enough for many hundreds of questions
+  - Google AI Studio (Gemini, the backup model; free)
+  - Pinecone (free)
+  - LangSmith (free and optional; without it the app works but sends no traces)
+
+  One model key is enough to run the agents. With both, an outage at one company does not stop the assistant.
 
 ### Setup
 
@@ -229,7 +231,7 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
    make search Q="why do card payments fail?" ROLE=analyst
    ```
 
-   With `GEMINI_API_KEY` (and ideally `OPENROUTER_API_KEY` as the fallback), each with its model, in `.env`, ask the agents. You get an answer with citations and a "How I got this answer" section:
+   With `ANTHROPIC_API_KEY` and `CLAUDE_MODEL` (and ideally `GEMINI_API_KEY` and `GEMINI_MODEL` as the backup) in `.env`, ask the agents. You get an answer with citations and a "How I got this answer" section:
 
    ```bash
    make ask Q="What should I do when the PayHub connection pool runs out?" ROLE=viewer
@@ -363,7 +365,7 @@ make test-keycloak   # login tests against the real Keycloak in Docker
 
 The tests do not need Keycloak either: they sign their own tokens with a key pair made for the test run, and the test apps trust that key instead of Keycloak's. `make test-keycloak` checks the same code against the real realm.
 
-The chat UI is tested without a browser: Streamlit's `AppTest` runs the page in the test process against replies recorded from the real API. `make eval-answers` (answer quality, uses model quota), `make e2e` (smoke tests against the running stack, including the chat UI in Chromium through Playwright; run `uv run playwright install chromium` once) and `make load` (an optional Locust load test) need the stack running.
+The chat UI is tested without a browser: Streamlit's `AppTest` runs the page in the test process against replies recorded from the real API. `make eval-answers` (answer quality, calls the real models, a few US cents a run), `make e2e` (smoke tests against the running stack, including the chat UI in Chromium through Playwright; run `uv run playwright install chromium` once) and `make load` (an optional Locust load test) need the stack running.
 
 The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 

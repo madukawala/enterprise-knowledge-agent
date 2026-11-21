@@ -23,8 +23,8 @@ question's trace as feedback, so the run can be compared over time in
 LangSmith next to users' thumbs up and down.
 
 Cost: about 3 model calls per question (research questions are not in the
-set), plus one per question with `--judge`. The free tiers allow it, but
-run it once, not in a loop.
+set), plus one per question with `--judge`. With claude-haiku-5-5 a full
+run costs about one US cent. Run it once, not in a loop.
 """
 
 import argparse
@@ -33,6 +33,7 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,8 @@ from pydantic import BaseModel, Field
 from agents.service import AgentRun, open_agent_service
 from core.config import get_settings
 from core.logging import configure_logging
+from ingestion.chunker import split_sections
+from ingestion.loader import load_documents
 from security.roles import Role
 
 DATASET = Path(__file__).parent / "datasets" / "answers.yaml"
@@ -134,15 +137,39 @@ class Judgement(BaseModel):
     reason: str = Field(description="One short sentence.")
 
 
+@cache
+def _sections() -> dict[tuple[str, str], str]:
+    """The text of every section of the sample documents, by (doc_id, section)."""
+    texts: dict[tuple[str, str], str] = {}
+    for document in load_documents(get_settings().sample_docs_dir):
+        for section in split_sections(document.body):
+            texts[(document.meta.doc_id, section.heading)] = section.text
+    return texts
+
+
+def _section_text(doc_id: str, section: str) -> str:
+    # A long section is split into several chunks named "<heading> (part n)",
+    # so the heading is matched from the start.
+    for (found_id, heading), text in _sections().items():
+        if found_id == doc_id and section.startswith(heading):
+            return text
+    return "(section text not found)"
+
+
 async def judge(agents: Any, run: AgentRun) -> bool | None:
-    """Ask a model whether the answer is supported by the sources it cited."""
+    """Ask a model whether the answer is supported by the sources it cited.
+
+    The judge sees the full text of each cited section, read from the sample
+    documents, so it can check the claims and not just the titles.
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
 
     answer = run.answer
     if answer.kind.value != "answered" or not answer.citations:
         return None
     sources = "\n".join(
-        f"[{c.number}] {c.citation.doc_id} {c.citation.title} ({c.citation.section})"
+        f'<source id="{c.number}" doc_id="{c.citation.doc_id}" section="{c.citation.section}">\n'
+        f"{_section_text(c.citation.doc_id, c.citation.section)}\n</source>"
         for c in answer.citations
     )
     messages = [

@@ -111,7 +111,7 @@ class FakeSearcher:
 def gateway(
     *models: ScriptedChatModel, timeout: float = 5.0, metrics: AgentMetrics | None = None
 ) -> LLMGateway:
-    names = ("gemini", "openrouter", "third")
+    names = ("anthropic", "gemini", "third")
     return LLMGateway(
         [
             ChatProvider(name=names[i], model=f"{names[i]}-test", chat=m)

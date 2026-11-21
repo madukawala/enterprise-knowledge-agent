@@ -15,7 +15,7 @@ The assistant must be enterprise-grade, but it runs on one developer machine (Ap
 | Frontend | Streamlit, reading server-sent events |
 | Backend | FastAPI (async), Pydantic v2, `structlog`, `tenacity` |
 | Orchestration | LangGraph `StateGraph` with sub-graphs ([ADR-0006](0006-langgraph-agents-and-deep-agent-patterns.md)) |
-| LLMs | Gemini Flash → OpenRouter, cloud free tiers ([ADR-0002](0002-llm-selection-gemini-flash-with-openrouter-fallback.md)) |
+| LLMs | Claude Haiku (paid, low cost) → Gemini Flash (free tier) ([ADR-0017](0017-claude-haiku-primary-gemini-backup.md), which replaced [ADR-0002](0002-llm-selection-gemini-flash-with-openrouter-fallback.md)) |
 | Retrieval | Pinecone Starter, hosted embeddings and reranker ([ADR-0003](0003-pinecone-single-hybrid-index.md), [0004](0004-embeddings-and-bm25.md), [0010](0010-reranking.md)) |
 | Identity | Keycloak in Docker ([ADR-0007](0007-keycloak-rbac-and-data-access.md)) |
 | State | Postgres (checkpoints, memory, feedback, audit), Redis (rate limiting) |
@@ -39,9 +39,13 @@ No model runs on the laptop: the LLMs, embeddings and reranker are all hosted AP
 | Option | Why not |
 |---|---|
 | Local LLMs with Ollama | Uses most of the 16 GB RAM next to the Docker stack, slow tool calling on a laptop. Dropped. |
-| Paid commercial LLM APIs | No free tier suitable for development and the demo |
+| Paid commercial LLM APIs | Chosen later for the main model only, see the change below |
 | Chroma / Qdrant instead of Pinecone | The assignment requires Pinecone |
 | Hard-coded users (Option A) | Less realistic for a bank; Keycloak is free and gives real OIDC |
+
+## Change after implementation (2026-11-21)
+
+The zero-cost rule was relaxed for one component: the main language model. One day of testing used up the free daily limits of both free model providers, after which every answer fell back to the reduced mode. The main model is now Claude Haiku, which is paid but set up to cost about a tenth of a US cent per question; Gemini's free tier stays as the backup. Everything else is unchanged and still free. See [ADR-0017](0017-claude-haiku-primary-gemini-backup.md).
 
 ## Related
 

@@ -14,7 +14,7 @@ Together with [ASSUMPTIONS.md](../ASSUMPTIONS.md), these records explain the ass
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-technology-stack-and-localhost-constraints.md) | The technology stack, chosen to run on one laptop at no cost | Accepted |
-| [0002](0002-llm-selection-gemini-flash-with-openrouter-fallback.md) | Gemini Flash as the main language model, OpenRouter as the backup, with a circuit breaker | Accepted |
+| [0002](0002-llm-selection-gemini-flash-with-openrouter-fallback.md) | Gemini Flash as the main language model, OpenRouter as the backup, with a circuit breaker | Superseded by 0017 |
 | [0003](0003-pinecone-single-hybrid-index.md) | One Pinecone hybrid index that combines the meaning-based and keyword scores | Accepted |
 | [0004](0004-embeddings-and-bm25.md) | Pinecone-hosted `multilingual-e5-large` embeddings and BM25 fitted on our own documents | Accepted |
 | [0005](0005-pinecone-namespaces.md) | One namespace per document collection; filters for everything else | Accepted |
@@ -29,10 +29,11 @@ Together with [ASSUMPTIONS.md](../ASSUMPTIONS.md), these records explain the ass
 | [0014](0014-streamlit-chat-ui.md) | Streamlit chat UI as a thin client of the streaming API: own image, Stop cancels the run, state per browser tab | Accepted |
 | [0015](0015-rate-limiting.md) | Questions per minute as Redis token buckets per user and role, plus a daily token budget per user | Accepted |
 | [0016](0016-guardrails-rules-and-pattern-masking.md) | Prompt-injection rules and pattern-based personal data masking in code, instead of LLM Guard and Presidio | Accepted |
+| [0017](0017-claude-haiku-primary-gemini-backup.md) | Claude Haiku as the main language model, set up for low cost, with Gemini as the backup | Accepted |
 
 ## Adding a record
 
-1. Copy [template.md](template.md) to a new file with the next number, for example `0017-short-title.md`.
+1. Copy [template.md](template.md) to a new file with the next number, for example `0018-short-title.md`.
 2. Fill in each section in plain language.
 3. Add a row to the table above.
 

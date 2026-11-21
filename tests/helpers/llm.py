@@ -1,4 +1,4 @@
-"""Fake chat models, so tests never call Gemini or OpenRouter.
+"""Fake chat models, so tests never call Claude or Gemini.
 
 - `fake_chat_model(["reply", ...])` answers plain chat calls in order.
 - `ScriptedChatModel` also answers structured calls (`with_structured_output`),
