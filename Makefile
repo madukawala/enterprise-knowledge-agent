@@ -120,7 +120,9 @@ scan-image: ## Scan the API, UI, sandbox and MCP images for known vulnerabilitie
 	$(COMPOSE) build api ui sandbox mcp
 	@for image in $(API_IMAGE) $(UI_IMAGE) $(SANDBOX_IMAGE) $(MCP_IMAGE); do \
 		docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-			-v trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image \
+			-v trivy-cache:/root/.cache/trivy \
+			-v $(CURDIR)/trivy-secret.yaml:/trivy-secret.yaml:ro $(TRIVY_IMAGE) image \
+			--secret-config /trivy-secret.yaml \
 			--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $$image || exit 1; \
 	done
 
