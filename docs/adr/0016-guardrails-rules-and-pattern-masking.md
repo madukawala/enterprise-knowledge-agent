@@ -15,7 +15,7 @@ Both would also make the API image much larger and slower to build and scan in C
 ## Decision
 
 - **Injection detection is a set of rules in code** ([security/guardrails/injection.py](../../security/guardrails/injection.py)): six categories (instruction override, prompt leak, role escalation, data exfiltration, tool abuse, fake delimiters), run on a normalised form of the text that undoes full-width letters, invisible characters, look-alike letters, leetspeak and base64. The same rules scan the question and every retrieved chunk.
-- **Personal data is masked with patterns and checksums** ([core/pii.py](../../core/pii.py)): e-mail, card numbers (Luhn), IBAN (mod-97), UK sort code and account, UK National Insurance numbers, phone numbers, IP addresses and API keys or tokens. It runs on answers, the streamed preview, every log line and every LangSmith trace.
+- **Personal data is masked with patterns and checksums** ([core/pii.py](../../core/pii.py)): e-mail, card numbers (Luhn), IBAN (mod-97), UK sort code and account, UK National Insurance numbers, phone numbers, IP addresses and API keys or tokens. It runs on answers, the streamed preview, every log line and every LangSmith trace. In a trace it covers the model calls and the graph state of each agent step, whose typed objects (chat messages, tool results, retrieved chunks) are turned into plain data and then masked.
 - **Both sit behind small functions** (`scan(text)`, `mask(text)`), so a model-based scanner can be added later without touching the agents.
 - The approach and its layers are written up in [PROMPT_INJECTION.md](../security/PROMPT_INJECTION.md).
 
