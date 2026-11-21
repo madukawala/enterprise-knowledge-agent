@@ -1,0 +1,12 @@
+# Loads the dashboards in this folder when Grafana starts (make up-observability).
+apiVersion: 1
+
+providers:
+  - name: helix
+    folder: Helix Knowledge Assistant
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

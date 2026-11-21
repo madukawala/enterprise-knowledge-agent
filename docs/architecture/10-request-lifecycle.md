@@ -14,7 +14,7 @@ sequenceDiagram
     participant LS as LangSmith
 
     U->>UI: open the app
-    UI->>KC: OIDC login (authorization code + PKCE)
+    UI->>KC: OIDC login (password grant from the UI server; PKCE redirect in production)
     KC-->>UI: access token (JWT with realm roles)
     U->>UI: ask a question
     UI->>MW: POST /chat (Bearer JWT, thread_id, message)

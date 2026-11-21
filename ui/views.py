@@ -24,6 +24,7 @@ _STATUS_BADGES: dict[TurnStatus, tuple[str, Any]] = {
     TurnStatus.DONE: ("Done", "green"),
     TurnStatus.FAILED: ("Failed", "red"),
     TurnStatus.STOPPED: ("Stopped", "gray"),
+    TurnStatus.WAITING: ("Waiting for you", "orange"),
 }
 
 # Shown at the end of the text while the answer is still being written.
@@ -35,7 +36,65 @@ _CURSOR = " ▌"
 # ---------------------------------------------------------------
 
 
-def answer(turn: Turn) -> None:
+def _request(name: str, value: Any) -> None:
+    """Button callbacks only note what was asked; app.py does it with the access token."""
+    st.session_state[name] = value
+
+
+def _approval(turn: Turn) -> None:
+    approval = turn.approval or {}
+    approval_id = str(approval.get("approval_id", ""))
+    st.info(str(approval.get("message", "This step needs your approval.")), icon=":material/help:")
+    approve, reject = st.columns(2)
+    approve.button(
+        "Approve",
+        key=f"approve-{approval_id}",
+        icon=":material/check:",
+        type="primary",
+        on_click=_request,
+        args=("approval_answer", (approval_id, True)),
+    )
+    reject.button(
+        "Reject",
+        key=f"reject-{approval_id}",
+        icon=":material/close:",
+        on_click=_request,
+        args=("approval_answer", (approval_id, False)),
+    )
+
+
+def _feedback(turn: Turn) -> None:
+    if turn.feedback:
+        st.caption("Thanks for the feedback.")
+        return
+    up, down, _ = st.columns([1, 1, 6])
+    up.button(
+        "",
+        key=f"up-{turn.run_id}",
+        icon=":material/thumb_up:",
+        help="This answer helped",
+        on_click=_request,
+        args=("feedback_request", (turn.run_id, "up")),
+    )
+    down.button(
+        "",
+        key=f"down-{turn.run_id}",
+        icon=":material/thumb_down:",
+        help="This answer did not help",
+        on_click=_request,
+        args=("feedback_request", (turn.run_id, "down")),
+    )
+
+
+def answer(turn: Turn, *, controls: bool = True) -> None:
+    """Draw one answer. `controls=False` while it streams: the approve and
+    feedback buttons are drawn once the page settles, so each has one key."""
+    if turn.status is TurnStatus.WAITING:
+        if controls:
+            _approval(turn)
+        else:
+            st.caption("Waiting for your approval...")
+        return
     if turn.status is TurnStatus.STREAMING:
         if turn.preview:
             st.markdown(turn.preview + _CURSOR)
@@ -45,6 +104,8 @@ def answer(turn: Turn) -> None:
 
     if turn.final is not None:
         _final_answer(turn.final)
+        if controls and turn.run_id and turn.status is TurnStatus.DONE:
+            _feedback(turn)
     elif turn.preview:
         # Stopped or failed half-way: keep what was written, marked as unfinished.
         st.markdown(turn.preview)
@@ -107,6 +168,17 @@ def activity(turn: Turn) -> None:
 
     for search in turn.searches:
         _search(search)
+    if turn.research is not None:
+        _research(turn.research)
+    if turn.memory:
+        st.markdown("**Memory**")
+        for item in turn.memory:
+            st.caption(item)
+    if turn.tools:
+        st.markdown("**Enterprise data tools**")
+        for call in turn.tools:
+            icon = ":material/check_circle:" if call.get("ok") else ":material/error:"
+            st.caption(f"{icon} {fmt.tool_line(call)}")
 
     if turn.checks:
         st.markdown("**Validation**")
@@ -154,6 +226,16 @@ def _search(search: dict[str, Any]) -> None:
         st.warning(f"No answer from: {', '.join(failed)}", icon=":material/warning:")
     if search.get("relaxed"):
         st.caption("Second try, with the optional filters dropped.")
+
+
+def _research(research: dict[str, Any]) -> None:
+    st.markdown("**Research**")
+    st.caption(fmt.research_line(research))
+    for batch in research.get("batches") or []:
+        st.caption(fmt.batch_line(batch))
+    if research.get("plan_code"):
+        with st.expander("Search plan (Python, run in the sandbox)"):
+            st.code(research["plan_code"], language="python")
 
 
 def _check(check: dict[str, Any]) -> None:

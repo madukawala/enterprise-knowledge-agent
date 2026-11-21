@@ -9,7 +9,7 @@ The assignment offers Option A (hard-coded users) or Option B (an open-source id
 
 ## Decision
 
-- **Option B: Keycloak** in Docker. A realm file (`helix`) imports three roles and one test user per role. The UI logs in with OIDC (authorization code + PKCE). The API validates JWTs against the cached JWKS: signature, issuer, audience and expiry; `alg=none` and unknown keys are rejected.
+- **Option B: Keycloak** in Docker. A realm file (`helix`) imports three roles and one test user per role. The UI logs in with OIDC (see "Changes during implementation" below for the flow used). The API validates JWTs against the cached JWKS: signature, issuer, audience and expiry; `alg=none` and unknown keys are rejected.
 - **One role matrix** in code (`security/policies.py`), deny by default, used by API routes, agent tools, MCP tools and retrieval filters:
 
 | Tool / action | Viewer | Analyst | Administrator |
@@ -26,6 +26,13 @@ The assignment offers Option A (hard-coded users) or Option B (an open-source id
   2. Every tool call is checked in code against the matrix **before** it runs, whatever the LLM asked for.
   3. Every retrieval query adds `access_level ∈ allowed levels` from the token, so restricted chunks never reach the prompt.
 - The role always comes from the validated token, never from the request body or the conversation.
+
+## Changes during implementation (`feature/auth-rbac`)
+
+- **Sign-in flow in the UI.** The plan was the browser redirect flow (authorization code + PKCE). The UI uses the password grant instead: a small sign-in form whose values the UI server sends to Keycloak. Streamlit has no simple way to receive the redirect and keep the access token for API calls, and the form keeps the demo to one page. Tokens stay in the Streamlit session on the server, never in the browser. The realm still has PKCE enabled for the UI client, so a deployment can switch to the redirect without changing the API. Recorded as ASSUMPTIONS U2 and S7.
+- **Tool filtering before the model.** The research and tool agents do not exist yet. The supervisor checks the intent the model chose against the matrix; a role without the permission gets a plain document question, and the answer says why. When those agents arrive, they ask the same matrix.
+- **Admin routes.** Only `GET /admin/access-matrix` exists so far. The other admin actions are already in the matrix (admins only), so their branches add a route with `requires(Action.X)` and nothing else.
+- **Conversation owner.** Threads belong to the token's `sub`, so two users with the same role never share one.
 
 ## Consequences
 

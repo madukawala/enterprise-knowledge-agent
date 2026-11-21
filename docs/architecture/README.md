@@ -49,3 +49,6 @@ The system context diagram uses the standard C4 colours instead: dark blue for p
 - **Mermaid diagrams** are written as text inside the Markdown files. GitHub draws them automatically. Edit the text and the diagram updates.
 
 When a feature changes the design, the diagrams are updated in the same branch.
+
+
+[07-failure-handling.md](07-failure-handling.md) lists every failure, what the user sees, and the test that proves it.

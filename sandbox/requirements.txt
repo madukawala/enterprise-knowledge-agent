@@ -1,0 +1,7 @@
+# The sandbox's own dependencies, installed into its image only.
+#
+# Empty on purpose: the server, the runner and the analysis modules users
+# may import (math, statistics, collections, datetime, json, re, ...) are
+# all in Python's standard library. Anything added here becomes reachable
+# from code users and models write, so add a library only with a reason,
+# pinned to an exact version, and with a sandbox test for what it exposes.

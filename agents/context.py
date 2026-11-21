@@ -10,23 +10,33 @@ scanning of the same text.
 
 from collections.abc import Sequence
 from datetime import date
+from functools import cache
 from html import escape
 
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, SystemMessage
 
 from agents.prompts import load
 from rag.retrieval import SearchHit
+from security.guardrails.output import PromptFingerprint
 
 
-def system_message(task: str, *, today: date) -> SystemMessage:
-    """The shared rules (system.md) followed by the task of one node."""
+def system_message(task: str, *, today: date, **values: object) -> SystemMessage:
+    """The shared rules (system.md) followed by the task of one node.
+
+    `values` fill the task's own placeholders, such as `$max_batches`.
+    """
     rules = load("system").substitute(today=today.isoformat())
-    return SystemMessage(rules + "\n\n" + load(task).substitute(today=today.isoformat()))
+    task_text = load(task).substitute(today=today.isoformat(), **values)
+    return SystemMessage(rules + "\n\n" + task_text)
 
 
-def history_block(messages: Sequence[AnyMessage], *, limit: int) -> str:
-    """The last `limit` messages before the current question, as plain text."""
+def history_block(messages: Sequence[AnyMessage], *, limit: int, summary: str = "") -> str:
+    """The last `limit` messages before the current question, as plain text.
+
+    For a long thread, `summary` stands in for the turns before those.
+    """
     earlier = list(messages[:-1])[-limit:] if limit else []
+    head = f"<summary>\n{escape(summary)}\n</summary>\n\n" if summary else ""
     lines: list[str] = []
     for message in earlier:
         if isinstance(message, HumanMessage):
@@ -34,8 +44,8 @@ def history_block(messages: Sequence[AnyMessage], *, limit: int) -> str:
         elif isinstance(message, AIMessage):
             lines.append(f"Assistant: {message.text}")
     if not lines:
-        return ""
-    return "<conversation>\n" + "\n".join(lines) + "\n</conversation>\n\n"
+        return head
+    return head + "<conversation>\n" + "\n".join(lines) + "\n</conversation>\n\n"
 
 
 def _attribute(name: str, value: str) -> str:
@@ -69,11 +79,32 @@ def user_message(
     history: int,
     sources: Sequence[SearchHit] = (),
     notes: Sequence[str] = (),
+    findings: Sequence[str] = (),
+    overview: str = "",
+    summary: str = "",
+    memory: Sequence[str] = (),
+    tool_results: Sequence[str] = (),
 ) -> HumanMessage:
-    """One user message: earlier conversation, sources, notes, then the question."""
-    text = history_block(messages, limit=history)
+    """One user message: conversation, overview, sources, findings, notes, then the question.
+
+    Findings are written by research sub-agents from document text, so they
+    are wrapped in tags and treated as data, like the sources.
+    """
+    text = history_block(messages, limit=history, summary=summary)
+    if memory:
+        text += "<memory>\n" + "\n".join(f"- {escape(m)}" for m in memory) + "\n</memory>\n\n"
+    if overview:
+        text += f"<collections>\n{overview}\n</collections>\n\n"
     if sources:
         text += sources_block(sources)
+    if tool_results:
+        text += (
+            "<tool_results>\n"
+            + "\n".join(f"- {escape(r)}" for r in tool_results)
+            + "\n</tool_results>\n\n"
+        )
+    if findings:
+        text += "<findings>\n" + "\n".join(f"- {escape(f)}" for f in findings) + "\n</findings>\n\n"
     if notes:
         text += "Notes from the system:\n" + "\n".join(f"- {note}" for note in notes) + "\n\n"
     text += f"<question>\n{question}\n</question>"
@@ -89,8 +120,47 @@ def prompt(
     history: int,
     sources: Sequence[SearchHit] = (),
     notes: Sequence[str] = (),
+    findings: Sequence[str] = (),
+    overview: str = "",
+    values: dict[str, object] | None = None,
+    summary: str = "",
+    memory: Sequence[str] = (),
+    tool_results: Sequence[str] = (),
 ) -> list[BaseMessage]:
     return [
-        system_message(task, today=today),
-        user_message(question, messages, history=history, sources=sources, notes=notes),
+        system_message(task, today=today, **(values or {})),
+        user_message(
+            question,
+            messages,
+            history=history,
+            sources=sources,
+            notes=notes,
+            findings=findings,
+            overview=overview,
+            summary=summary,
+            memory=memory,
+            tool_results=tool_results,
+        ),
     ]
+
+
+# Every prompt the models are given. The validator rejects an answer that
+# repeats eight words in a row from any of them (system prompt leakage).
+PROMPT_NAMES = (
+    "system",
+    "supervisor",
+    "search_plan",
+    "answer",
+    "conversation",
+    "research_plan",
+    "research_batch",
+    "summary",
+    "tools",
+)
+
+
+@cache
+def prompt_fingerprint() -> PromptFingerprint:
+    # The example code in research_plan.md is left out: an answer quoting a
+    # search query is not a leak.
+    return PromptFingerprint.of(load(name).template.split("```")[0] for name in PROMPT_NAMES)

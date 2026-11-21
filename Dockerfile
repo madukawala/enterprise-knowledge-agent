@@ -9,6 +9,7 @@
 #   ui-builder  installs only the UI's libraries (Streamlit, httpx) into /opt/venv
 #   runtime     a clean Python image with security fixes and a non-root user
 #   api         runtime + the API's /opt/venv
+#   mcp         runtime + the same /opt/venv, running the MCP server
 #   ui          runtime + the UI's /opt/venv and the ui/ folder. No backend
 #               code and no backend libraries, so the UI image cannot import
 #               them even by mistake (ADR-0014).
@@ -55,8 +56,14 @@ COPY agents ./agents
 # and needs no secrets inside the image.
 COPY ingestion ./ingestion
 COPY ui ./ui
+COPY mcp_server ./mcp_server
+# uv keeps the project's built wheel in its cache and only rebuilds it when
+# pyproject.toml changes, so a change to the code alone would ship the old
+# wheel. --refresh-package makes it build the project again every time;
+# the libraries still come from the cache.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-editable
+    uv sync --locked --no-dev --no-editable \
+        --refresh-package enterprise-knowledge-agent
 
 # ---------------------------------------------------------------
 # ui-builder
@@ -124,6 +131,26 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"]
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]
+
+# ---------------------------------------------------------------
+# mcp: the enterprise data server (mcp_server/README.md)
+# ---------------------------------------------------------------
+FROM runtime AS mcp
+
+LABEL org.opencontainers.image.title="enterprise-knowledge-agent-mcp" \
+      org.opencontainers.image.source="https://github.com/madukawala/enterprise-knowledge-agent" \
+      org.opencontainers.image.licenses="MIT"
+
+COPY --from=builder /opt/venv /opt/venv
+
+USER 10001:10001
+WORKDIR /tmp
+EXPOSE 8200
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=2)"]
+
+CMD ["python", "-m", "mcp_server"]
 
 # ---------------------------------------------------------------
 # ui

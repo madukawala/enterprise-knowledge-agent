@@ -1,5 +1,8 @@
-"""Security: roles, authentication, guardrails and rate limiting.
+"""Security: login, the role matrix, guardrails and rate limiting.
 
-Only the role and access-level definitions exist so far. Authentication and
-the role matrix arrive in `feature/auth-rbac`.
+- roles.py: the three roles and the document access levels each may read.
+- policies.py: the role matrix, what each role may do (deny by default).
+- auth.py: checks Keycloak access tokens and returns the signed-in user.
+
+Guardrails and rate limiting are added by their own branches.
 """

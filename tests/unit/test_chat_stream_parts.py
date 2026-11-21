@@ -22,12 +22,14 @@ def _recorder() -> RunRecorder:
 
 
 def _tokens(recorder: RunRecorder, *parts: str, call: str = "call-1") -> str:
+    """The streamed text, including the end that is held back until the draft is done."""
     text = ""
     for part in parts:
         for event in recorder.translate("messages", (AIMessageChunk(part, id=call), RESPONSE)):
             assert isinstance(event, TokenEvent)
             text += event.text
-    return text
+    finished = recorder.translate("tasks", {"id": "t1", "name": "response", "result": {}})
+    return text + "".join(e.text for e in finished if isinstance(e, TokenEvent))
 
 
 def test_an_event_is_one_sse_block_with_one_line_of_json() -> None:

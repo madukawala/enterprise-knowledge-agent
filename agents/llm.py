@@ -14,9 +14,11 @@ either plain text or a filled-in Pydantic model, and the gateway:
 Every call returns an `LLMCall` record (provider, model, tokens, time), so
 the answer can say which model wrote it and the activity panel can show it.
 
-The circuit breaker (stop calling a provider that keeps failing for a
-while) is added in `feature/resilience`, inside `_call`, without changing
-the agents.
+Each provider has a circuit breaker (agents/breaker.py): a provider that
+keeps failing, or that answers "rate limited", is skipped for a while and
+then probed with one call, so questions do not wait for a provider that is
+down. Retries with back-off inside one provider are done by the provider's
+own SDK (`LLM_MAX_RETRIES`).
 """
 
 import asyncio
@@ -30,6 +32,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, SecretStr
 
+from agents.breaker import BreakerState, CircuitBreaker, is_rate_limit
 from agents.state import LLMCall
 from agents.telemetry import AgentMetrics
 from core.config import Settings
@@ -60,6 +63,8 @@ class LLMGateway:
     providers: Sequence[ChatProvider]
     timeout_seconds: float = 30.0
     metrics: AgentMetrics | None = None
+    # One per provider name. A provider without one is always tried.
+    breakers: dict[str, CircuitBreaker] = field(default_factory=dict)
     _structured: dict[tuple[str, type[BaseModel]], Runnable[Any, Any]] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -106,10 +111,30 @@ class LLMGateway:
         invoke: Callable[[ChatProvider], Awaitable[tuple[ResultT, AIMessage]]],
     ) -> tuple[ResultT, LLMCall]:
         for position, provider in enumerate(self.providers):
+            breaker = self.breakers.get(provider.name)
+            if breaker is not None and not breaker.allow():
+                log.info("llm_provider_skipped", provider=provider.name, purpose=purpose)
+                self._count(provider.name, purpose, "skipped")
+                continue
             started = time.perf_counter()
             try:
                 async with asyncio.timeout(self.timeout_seconds):
                     result, raw = await invoke(provider)
+            except _UnusableOutputError as error:
+                # The provider is up but gave a bad answer: try the next one,
+                # without counting it against the provider's breaker.
+                log.warning(
+                    "llm_call_failed",
+                    provider=provider.name,
+                    model=provider.model,
+                    purpose=purpose,
+                    outcome="bad_output",
+                    error_type=type(error).__name__,
+                )
+                self._count(provider.name, purpose, "bad_output")
+                if breaker is not None:
+                    breaker.success()
+                continue
             except Exception as error:  # any provider error means "try the next one"
                 # Provider SDKs raise many different error types. Only the
                 # type is logged: messages can echo parts of the prompt.
@@ -123,8 +148,12 @@ class LLMGateway:
                     error_type=type(error).__name__,
                 )
                 self._count(provider.name, purpose, outcome)
+                if breaker is not None:
+                    breaker.failure(rate_limited=is_rate_limit(error))
                 continue
 
+            if breaker is not None:
+                breaker.success()
             record = _record(purpose, provider, raw, started, fallback=position > 0)
             self._count(provider.name, purpose, "ok")
             if self.metrics:
@@ -188,7 +217,31 @@ def build_gateway(settings: Settings, *, metrics: AgentMetrics | None = None) ->
         )
     if len(providers) == 1:
         log.warning("llm_no_fallback", provider=providers[0].name)
-    return LLMGateway(providers, timeout_seconds=settings.llm_timeout_seconds, metrics=metrics)
+
+    def on_change(provider: str, state: BreakerState) -> None:
+        if metrics is not None:
+            metrics.llm_breaker_state.labels(provider=provider).set(_STATE_VALUE[state])
+
+    breakers = {
+        provider.name: CircuitBreaker(
+            provider.name,
+            failures=settings.llm_breaker_failures,
+            window_seconds=settings.llm_breaker_window_seconds,
+            open_seconds=settings.llm_breaker_open_seconds,
+            on_change=on_change,
+        )
+        for provider in providers
+    }
+    return LLMGateway(
+        providers,
+        timeout_seconds=settings.llm_timeout_seconds,
+        metrics=metrics,
+        breakers=breakers,
+    )
+
+
+# For the `llm_breaker_state` gauge: 0 closed, 1 half-open, 2 open.
+_STATE_VALUE = {BreakerState.CLOSED: 0, BreakerState.HALF_OPEN: 1, BreakerState.OPEN: 2}
 
 
 def _chat_model(name: str, key: SecretStr, model: str, settings: Settings) -> BaseChatModel:

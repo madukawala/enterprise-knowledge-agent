@@ -13,10 +13,10 @@ sequenceDiagram
     participant T as Models and search
 
     Note over U: Streamlit server, httpx (the browser never calls the API)
-    U->>A: POST /chat {message, thread_id?} (X-Dev-Role until login is added)
-    A->>A: check the body, the thread's owner, one question per thread
-    alt bad request, someone else's thread, or thread busy
-        A-->>U: 422 / 404 / 409 JSON error (no stream)
+    U->>A: POST /chat {message, thread_id?} + Authorization: Bearer <access token>
+    A->>A: check the token and the chat permission, the body, the thread's owner, one question per thread
+    alt no valid token, role not allowed, bad request, someone else's thread, or thread busy
+        A-->>U: 401 / 403 / 422 / 404 / 409 JSON error (no stream)
     end
     A-->>U: 200 text/event-stream, headers X-Thread-ID, X-Run-ID, X-Request-ID
     A->>Q: start the run in its own task (time limit CHAT_TIMEOUT_SECONDS)
@@ -57,7 +57,16 @@ Every event's `data` is one line of JSON with `seq` (1, 2, 3, ... within the str
 | `response_end` | `kind`, `text`, `markdown`, `citations`, `steps`, `limits`, `written_by`, `llm_calls`, `duration_ms` | The final answer with its sources |
 | `error` | `code` (`timeout`, `internal_error`), `message` | A clear message; the details are in the log under the same `request_id` |
 
-Coming with later branches, in the same format: `tool_call` / `tool_result` (`feature/mcp-server`, `feature/python-sandbox`), `memory` (`feature/memory`) and the human approval request (`feature/hitl-feedback`).
+Added by later branches, in the same format:
+
+| Event | Fields | When |
+|---|---|---|
+| `research` | `plan_source`, `plan_code`, `batches` (label, depth, hits, findings, error, split), `max_depth`, `sources`, `tokens_used`, `stopped_by_budget` | The research agent finished (`feature/rlm-research`) |
+| `tool_call` | `tool`, `arguments`, `ok`, `items`, `error`, `duration_ms` | One enterprise data tool call (`feature/mcp-server`) |
+| `memory` | `saved` | What the memory writer remembered or summarised (`feature/memory`) |
+| `approval_required` | `approval_id`, `action`, `message` | The run stopped to ask the user; the last event of the stream. Answer with `POST /approvals/{approval_id}`, which streams the rest (`feature/hitl-feedback`) |
+
+A stream now ends with `response_end`, `error` or `approval_required`.
 
 ## Rules for the client
 

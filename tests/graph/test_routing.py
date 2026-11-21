@@ -14,7 +14,15 @@ from tests.helpers.agents import (
 )
 from tests.helpers.llm import ScriptedChatModel
 
-ANSWER_PATH = ("input_guard", "supervisor", "retrieval", "supervisor", "response", "validator")
+ANSWER_PATH = (
+    "input_guard",
+    "supervisor",
+    "retrieval",
+    "supervisor",
+    "response",
+    "validator",
+    "memory",
+)
 
 
 async def test_a_document_question_is_searched_then_answered_with_citations() -> None:
@@ -70,7 +78,7 @@ async def test_small_talk_is_answered_without_searching() -> None:
 
     run = await agent_service(model, searcher).ask("hi there", role=Role.VIEWER)
 
-    assert run.nodes == ("input_guard", "supervisor", "response", "validator")
+    assert run.nodes == ("input_guard", "supervisor", "response", "validator", "memory")
     assert run.answer.kind is AnswerKind.CONVERSATION
     assert searcher.requests == []
     # The small-talk prompt is used, and it gets no sources.
@@ -91,19 +99,12 @@ async def test_out_of_scope_requests_get_the_standard_refusal_without_a_model_an
     assert [call.purpose for call in run.llm_calls] == ["supervisor"]
 
 
-async def test_research_questions_use_a_wider_search_and_say_so() -> None:
+async def test_research_questions_go_to_the_research_agent() -> None:
+    """Without a sandbox, research uses its fixed plan: four quarters of the last year."""
     model = ScriptedChatModel(
         structured={
             "SupervisorDecision": [decision("research", ["Find outages", "Group root causes"])],
-            "SearchPlan": [
-                search_plan(
-                    "payment failure outages",
-                    ["incidents"],
-                    departments=["payments"],
-                    date_from="2025-11-21",
-                    date_to="2026-11-21",
-                )
-            ],
+            "BatchFindings": [{"findings": []}] * 4,
         },
         texts=["Five outages share two root causes [1][2]."],
     )
@@ -113,13 +114,15 @@ async def test_research_questions_use_a_wider_search_and_say_so() -> None:
         "Summarize payment-failure outages over the last year", role=Role.ANALYST
     )
 
-    request = searcher.requests[0][0]
-    assert request.top_k == 20
-    assert request.filters.date_from is not None
-    assert any("Deep research" in limit for limit in run.answer.limits)
+    assert "research" in run.nodes
+    assert "retrieval" not in run.nodes
+    assert len(searcher.requests) == 4
+    assert all(request.filters.date_from is not None for request, _ in searcher.requests)
+    assert run.answer.kind is AnswerKind.ANSWERED
 
 
-async def test_enterprise_data_questions_search_documents_and_say_tools_are_not_connected() -> None:
+async def test_enterprise_data_questions_without_tools_answer_from_documents() -> None:
+    """No MCP server configured: the documents answer, and the answer says so."""
     model = ScriptedChatModel(
         structured={
             "SupervisorDecision": [decision("enterprise_data")],
@@ -131,7 +134,8 @@ async def test_enterprise_data_questions_search_documents_and_say_tools_are_not_
         "Who owns PayHub?", role=Role.ANALYST
     )
     assert run.answer.kind is AnswerKind.ANSWERED
-    assert any("not connected yet" in limit for limit in run.answer.limits)
+    assert "tools" in run.nodes
+    assert any("not connected" in limit for limit in run.answer.limits)
 
 
 async def test_the_model_saying_not_found_gives_the_standard_message() -> None:
@@ -170,7 +174,7 @@ async def test_an_empty_question_is_refused_without_calling_anything() -> None:
 
     run = await agent_service(model, searcher).ask("   ​ ", role=Role.VIEWER)
 
-    assert run.nodes == ("input_guard", "response", "validator")
+    assert run.nodes == ("input_guard", "response", "validator", "memory")
     assert run.answer.kind is AnswerKind.REFUSED
     assert model.calls == []
     assert searcher.requests == []
@@ -195,7 +199,7 @@ async def test_a_rejected_draft_is_written_once_more_with_the_problems_as_notes(
     run = await agent_service(model, FakeSearcher([result_with(hit("RB-001"))])).ask(
         "pool limit?", role=Role.VIEWER
     )
-    assert run.nodes[-4:] == ("response", "validator", "response", "validator")
+    assert run.nodes[-5:] == ("response", "validator", "response", "validator", "memory")
     assert run.answer.kind is AnswerKind.ANSWERED
     assert run.answer.text == "The limit is 200 [1]."
     assert "It cites [9]" in model.prompts_for("text")[1]

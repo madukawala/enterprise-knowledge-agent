@@ -8,8 +8,11 @@ Logs from other libraries that use the standard `logging` module (uvicorn,
 httpx and so on) go through the same pipeline, so the whole service writes
 one consistent format.
 
-Secrets are removed before anything is written. Masking of personal data
-(Presidio) is added in the guardrails branch.
+Secrets are removed before anything is written: fields named like secrets
+are replaced, and every text value is passed through the personal data
+masker (core/pii.py), so an e-mail address, card number or API key that
+ends up in a log line by accident is written as `[EMAIL]`, `[CARD]` or
+`[SECRET]`.
 """
 
 import logging
@@ -21,6 +24,7 @@ import structlog
 from structlog.types import EventDict, Processor, WrappedLogger
 
 from core.config import LogFormat, LogLevel
+from core.pii import mask_text
 
 REDACTED = "[REDACTED]"
 
@@ -68,6 +72,23 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
     return event_dict
 
 
+def _mask(value: Any) -> Any:
+    if isinstance(value, str):
+        return mask_text(value)
+    if isinstance(value, Mapping):
+        return {key: _mask(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_mask(item) for item in value]
+    return value
+
+
+def mask_personal_data(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
+    """Mask personal data and secrets in every text value of a log line."""
+    for key in list(event_dict):
+        event_dict[key] = _mask(event_dict[key])
+    return event_dict
+
+
 class _StdoutHandler(logging.StreamHandler):  # type: ignore[type-arg]
     """Writes to whatever `sys.stdout` is at the moment of logging.
 
@@ -89,8 +110,10 @@ def configure_logging(level: LogLevel = "INFO", log_format: LogFormat = LogForma
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
         redact_secrets,
+        mask_personal_data,
+        # Last, so the timestamp is never mistaken for personal data.
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
     ]
 
     renderer: Processor

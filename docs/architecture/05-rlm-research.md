@@ -54,24 +54,47 @@ sequenceDiagram
 
 ## Example search plan
 
-The plan is data, not a general program. The sandbox exposes only these four functions, and their results are plain dictionaries.
+The plan is data, not a general program. The sandbox offers only four functions, and they only describe work: `search()` returns a dictionary describing one search, which the research agent then runs itself with the user's role filter. This is the plan the model writes for the example question (asked on 2026-11-21):
 
 ```python
-incidents = filter_by(
-    collection="incidents",
-    department="payments",
-    created_after="2025-11-20",
-)
-quarters = batch(incidents, by="quarter")
-plan = [
-    fetch_section(q, query="payment failure outage root cause impact", top_k=8)
-    for q in quarters
+quarters = [
+    ("2025-11-21", "2026-02-20", "Q1"),
+    ("2026-02-21", "2026-05-20", "Q2"),
+    ("2026-05-21", "2026-08-20", "Q3"),
+    ("2026-08-21", "2026-11-21", "Q4"),
+]
+result = [
+    search(
+        "payment failure outage root cause impact",
+        ["incidents"],
+        filter_by(department="payments", date_from=start, date_to=end),
+        label=name,
+    )
+    for start, end, name in quarters
 ]
 ```
+
+The functions are listed in [sandbox/README.md](../../sandbox/README.md#using-it). A batch whose search comes back full (8 results) and covers more than 45 days is split into two halves of its date range, one level deeper.
+
+## As built
+
+| Piece | Where |
+|---|---|
+| The research agent (all six steps) | [agents/nodes/research.py](../../agents/nodes/research.py) |
+| Plan and batch prompts | [agents/prompts/research_plan.md](../../agents/prompts/research_plan.md), [research_batch.md](../../agents/prompts/research_batch.md) |
+| Plan validation and execution | [sandbox/validator.py](../../sandbox/validator.py) (plan mode), [sandbox/child.py](../../sandbox/child.py) |
+| Limits | `RESEARCH_MAX_DEPTH` (3), `RESEARCH_MAX_FANOUT` (5), `RESEARCH_TOKEN_BUDGET` (40,000), `RESEARCH_MAX_SOURCES` (20), `RESEARCH_PARALLEL_CALLS` (2 model calls at a time) and `RESEARCH_MAX_EXTRACTIONS` (4 batches get model-written findings), so a research question stays within the free tiers' per-minute limits |
+| Activity panel | the `research` event: plan source, the plan's code, every batch with its depth, sources and findings |
+
+The batch sub-agents run in parallel inside the research node (`asyncio.gather`), not as separate graph nodes: the recursion depth changes per run, and keeping it inside one node keeps the graph and its streamed events simple. Each sub-agent's search and model call still appear in the LangSmith trace.
+
+Every chunk a batch retrieves goes through the same cleaning and injection screening as the retrieval agent's, and every finding the model writes is scanned too. Findings reach the answer prompt inside `<findings>` tags, which the system prompt treats as data.
 
 ## Failure handling inside the sub-graph
 
 - A sub-agent that fails or times out writes an error for its batch; the other batches still finish.
 - The aggregator states which batches are missing, and the answer says so.
 - Reaching the depth, fan-out or token limit stops further splitting and the agent works with what it has. It does not fail the run.
-- Viewer users never reach this sub-graph: it is filtered out of their tool list and the supervisor refuses the route ([RBAC](../adr/0007-keycloak-rbac-and-data-access.md)).
+- A plan the sandbox refuses is written again once, with the reason. If it is refused again, or there is no sandbox, the fixed plan is used: the question over the last twelve months, by quarter.
+- If every batch fails, the supervisor falls back to one wide search with the retrieval agent.
+- Viewer users never reach this agent: the supervisor checks the role matrix after the model picks the intent, and a viewer's research question runs as a plain document question ([RBAC](../adr/0007-keycloak-rbac-and-data-access.md)).

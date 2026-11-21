@@ -15,12 +15,13 @@ from security.roles import Role
 from tests.helpers.agents import FakeSearcher, agent_service, hit, result_with
 from tests.helpers.chat import answering_model, chat_app
 from tests.helpers.sse import post_stream
+from tests.helpers.tokens import TEST_USERS, TOKENS, bearer
 
 
-async def _post_json(app: FastAPI, body: object, **headers: str) -> httpx.Response:
+async def _post_json(app: FastAPI, body: object, role: Role = Role.VIEWER) -> httpx.Response:
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
-        return await http.post("/chat", json=body, headers=headers)
+        return await http.post("/chat", json=body, headers=bearer(role))
 
 
 def _searcher() -> FakeSearcher:
@@ -78,7 +79,7 @@ async def test_the_role_comes_from_the_dev_header_and_defaults_to_viewer(
     app = chat_app(settings, answering_model("A [1].", "B [1]."), searcher)
 
     await post_stream(app, "/chat", {"message": "pool?"})
-    await post_stream(app, "/chat", {"message": "pool?"}, headers={"X-Dev-Role": "analyst"})
+    await post_stream(app, "/chat", {"message": "pool?"}, role=Role.ANALYST)
 
     assert [role for _, role in searcher.requests] == [Role.VIEWER, Role.ANALYST]
 
@@ -107,16 +108,9 @@ async def test_bad_requests_are_refused_before_streaming(
     assert model.calls == []
 
 
-async def test_an_unknown_role_header_is_refused(settings: Settings) -> None:
-    response = await _post_json(
-        chat_app(settings, answering_model()), {"message": "hi"}, **{"X-Dev-Role": "root"}
-    )
-    assert response.status_code == 422
-    assert "viewer, analyst, admin" in response.json()["error"]["message"]
-
-
 async def test_without_a_model_the_chat_says_it_is_unavailable(settings: Settings) -> None:
-    response = await _post_json(create_app(settings), {"message": "hi"})
+    app = create_app(settings, signing_keys=TOKENS.signing_keys)
+    response = await _post_json(app, {"message": "hi"})
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "llm_unavailable"
@@ -126,7 +120,7 @@ async def test_a_second_question_while_the_first_is_answering_gets_409(
     settings: Settings,
 ) -> None:
     app = chat_app(settings, answering_model("A [1]."), _searcher())
-    app.state.threads.start("thread-0001", owner="role:viewer")
+    app.state.threads.start("thread-0001", owner=TEST_USERS[Role.VIEWER].user_id)
 
     response = await _post_json(app, {"message": "hi", "thread_id": "thread-0001"})
 
@@ -167,7 +161,7 @@ async def test_startup_opens_the_agents_with_the_apps_metrics(
 
     @asynccontextmanager
     async def fake_open(
-        settings: Settings, *, metrics: object, retrieval_metrics: object
+        settings: Settings, *, metrics: object, retrieval_metrics: object, sandbox: object
     ) -> AsyncIterator[AgentService]:
         opened.append(metrics)
         yield service

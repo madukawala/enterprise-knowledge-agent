@@ -8,6 +8,10 @@ response piece by piece, and can disconnect as soon as a condition is met.
     reply = await post_stream(app, "/chat", {"message": "hi"},
                               disconnect_when=lambda events: len(events) >= 3)
     reply.status, reply.headers["x-thread-id"], reply.events
+
+The request is signed in as the test viewer unless `role` says otherwise.
+Pass `role=None` to send no token at all, or your own `Authorization`
+header to send a particular one.
 """
 
 import asyncio
@@ -17,6 +21,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from starlette.types import ASGIApp, Message
+
+from security.roles import Role
+from tests.helpers.tokens import bearer
 
 
 @dataclass
@@ -59,6 +66,7 @@ async def post_stream(
     body: Mapping[str, Any],
     *,
     headers: Mapping[str, str] | None = None,
+    role: Role | None = Role.VIEWER,
     disconnect_when: Callable[[Sequence[dict[str, Any]]], bool] | None = None,
     give_up_after: float = 5.0,
 ) -> StreamedReply:
@@ -67,7 +75,8 @@ async def post_stream(
     request_sent = False
     disconnected = asyncio.Event()
 
-    all_headers = {"content-type": "application/json", **(headers or {})}
+    login = bearer(role) if role is not None else {}
+    all_headers = {"content-type": "application/json", **login, **(headers or {})}
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},

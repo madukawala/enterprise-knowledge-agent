@@ -17,7 +17,7 @@ from api.main import create_app
 from core.config import Environment, LogFormat, Settings
 from security.roles import Role
 from tests.helpers.llm import fake_chat_model
-from tests.helpers.tokens import TokenFactory
+from tests.helpers.tokens import TOKENS, TokenFactory
 
 _TESTS_DIR = Path(__file__).parent
 _FOLDER_MARKERS = {"unit", "integration", "graph", "security", "resilience", "e2e"}
@@ -48,7 +48,8 @@ def settings() -> Settings:
 
 @pytest.fixture
 def app(settings: Settings) -> FastAPI:
-    return create_app(settings)
+    # Trusts the test signing key instead of fetching Keycloak's keys.
+    return create_app(settings, signing_keys=TOKENS.signing_keys)
 
 
 @pytest.fixture
@@ -67,7 +68,8 @@ async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture(scope="session")
 def token_factory() -> TokenFactory:
-    return TokenFactory()
+    # The same key pair the app fixtures trust.
+    return TOKENS
 
 
 @pytest.fixture

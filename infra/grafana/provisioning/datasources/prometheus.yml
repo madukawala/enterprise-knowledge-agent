@@ -1,5 +1,5 @@
 # Connects Grafana to Prometheus on startup, so there is nothing to set up by hand.
-# Dashboards are added in feature/observability-evals.
+# The dashboards are loaded from ../dashboards/
 
 apiVersion: 1
 

@@ -8,8 +8,33 @@ Quality measurements that are run by hand, because they use real API quota. Noth
 | [metrics.py](metrics.py) | Hit rate, MRR and recall |
 | [dataset.py](dataset.py) | Loads and checks a question set |
 | [retrieval.py](retrieval.py) | Runs the set against the real index, once per alpha |
+| [datasets/answers.yaml](datasets/answers.yaml) | 8 questions with what a good answer must do: its kind, the documents to cite (or never cite) and key facts |
+| [answers.py](answers.py) | Asks each question through the real agents and scores the answer |
 
-Answer-quality evaluations (Ragas faithfulness and relevancy, LangSmith datasets) are added with `feature/observability-evals`, in this same folder.
+## Answers: kind, citations, key facts and leaks
+
+```bash
+make eval-answers                                   # writes docs/evals/answers.md
+uv run python -m evals.answers --judge              # also asks a model whether each answer is grounded
+uv run python -m evals.answers --langsmith          # also attaches every score to the question's trace
+uv run python -m evals.answers --only cut-off-times # one case
+```
+
+For each question it measures:
+
+- **right kind of answer**: an answer, a refusal (prompt injection), "out of scope" (investment advice), or "not found". Getting a refusal right matters as much as getting an answer right.
+- **citation recall**: the share of the documents the answer should cite that it did cite.
+- **mentions**: the share of key words or phrases in the answer, a cheap check that the main fact is there.
+- **leaks**: documents the answer cited that are above the role's access. Must always be none.
+- **grounded** (with `--judge`): a second model call says whether every claim is supported by the cited sources.
+
+The latest results are in [docs/evals/answers.md](../docs/evals/answers.md).
+
+**Why not Ragas.** Ragas needs several model calls per question for each metric, and its embeddings model, which does not fit the free model tiers this project runs on. These measures are simple and cheap, and the grounding judge covers faithfulness when it is wanted.
+
+**With LangSmith** (`--langsmith`, and `LANGSMITH_TRACING=true` with a key): every score is attached to the question's trace as feedback (`eval_kind_correct`, `eval_citation_recall`, `eval_mentions`, `eval_grounded`), next to the users' own thumbs up and down (`user_score`), so quality can be followed over time in one place.
+
+**Cost:** about 3 model calls per question, one more with `--judge`. The free tiers allow it, but Gemini's per-minute limit may move some calls to OpenRouter; the report says which models ran.
 
 ## Retrieval: hit rate and MRR
 

@@ -17,9 +17,17 @@ The project is built step by step, one feature branch at a time, following the p
 - hybrid search: one weighted dense + BM25 score, a permission filter on every query, parallel queries across collections, re-ranking, and citations. Try it with `make search`, and measure it with `make eval-retrieval`;
 - the LangGraph agents: an input guard, a supervisor that plans and routes, a retrieval agent, a response agent and a validator that checks every citation. They run on Gemini with OpenRouter as the fallback, contain failures so one broken part never stops an answer, and are traced in LangSmith. Ask them from the terminal with `make ask` or `make chat`;
 - the streaming chat API: `POST /chat` streams the answer token by token, together with live events for the activity panel (each agent starting and finishing, the plan, the search, the checks, anything degraded). A client that disconnects stops the run, every run has a time limit, and conversations continue with follow-up questions. Watch it with `make stream`;
-- the chat UI (Streamlit): the conversation on the left and the agent activity panel on the right, updated live as the answer streams in, with sources under each answer, a Stop button that cancels the agents, and follow-up questions. Open it at <http://localhost:8501> after `make up`, or run it with `make run-ui`.
-
-Login, the research and tool agents, memory, the MCP server and the sandbox are added by the next branches. Until login exists, the UI has a role picker in its sidebar. [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the UI, ask the agents from the terminal and run the checks.
+- the chat UI (Streamlit): the conversation on the left and the agent activity panel on the right, updated live as the answer streams in, with sources under each answer, a Stop button that cancels the agents, and follow-up questions. Open it at <http://localhost:8501> after `make up`, or run it with `make run-ui`;
+- login and role checks: users sign in with Keycloak, and the API checks every access token itself (signature, issuer, audience, expiry). One deny-by-default role matrix decides what each role may do, for API routes, the agents' choice of tools and the document search. The UI shows the user's name and role and only the tools that role may use. Conversations belong to the signed-in user;
+- rate limiting: each user may ask a few questions back to back and then a set number per minute (more for higher roles), and has a daily budget of language model tokens. The counts are in Redis, shared by every API worker; a question over a limit gets 429 with `Retry-After`, and the UI says when to try again and shows today's usage. Admins can change the limits while the API runs;
+- guardrails: questions are scanned for prompt injection (including hidden forms such as look-alike letters and base64) and refused before any model runs; retrieved documents are cleaned and a document carrying planted instructions is left out; answers that repeat the internal instructions, show labels above the user's role or give investment advice are never shown; images and outside links are removed; personal data and secrets are masked in answers, the streamed preview, logs and traces. See [docs/security/PROMPT_INJECTION.md](docs/security/PROMPT_INJECTION.md);
+- the Python sandbox: a separate container, with no network, a read-only file system and no keys, that runs the analysts' Python (`POST /tools/python`) and, later, the research agent's search plans. Code is checked before it runs, gets only safe built-ins and allow-listed standard modules, and runs in a fresh process with CPU, memory and time limits. See [sandbox/README.md](sandbox/README.md);
+- recursive research for analysts and admins: a question such as "summarize payment-failure outages over the last year" makes the model write a Python search plan, which the sandbox checks and runs; the work is split into batches, each investigated by a sub-agent in parallel (splitting further when a batch holds too much, down to depth 3), and the findings are combined into one answer with citations. The activity panel shows the plan and every batch. See [docs/architecture/05-rlm-research.md](docs/architecture/05-rlm-research.md);
+- memory: conversations are saved in Postgres and survive restarts; a long conversation is summarised so prompts stay small; each user's past questions are remembered (masked) and related ones are recalled into later answers; users see their earlier conversations in the sidebar and can see and clear what is remembered. See [docs/architecture/08-memory.md](docs/architecture/08-memory.md);
+- resilience: each language model provider has a circuit breaker, so a provider that keeps failing or is rate limited is skipped for a while and then probed again; every dependency (Pinecone, the re-ranker, the sandbox, Redis, Keycloak, memory, LangSmith) has a reduced mode, and [docs/architecture/07-failure-handling.md](docs/architecture/07-failure-handling.md) lists each failure, what the user sees and the test that proves it;
+- the MCP server: a separate container with Helix Bank's (fictional) employee directory, service catalog and incident records as three read-only MCP tools. For analysts and admins, a tools agent picks the calls, which are checked in code before they are sent, and the answer combines the live data with the documents. See [mcp_server/README.md](mcp_server/README.md).;
+- human approval and feedback: deep research stops and asks the user first (LangGraph `interrupt`), then resumes from the checkpoint when they approve or reject it; every answer can be rated with thumbs up or down, which is saved, sent to the answer's LangSmith trace and listed for admins.;
+- observability and evaluations: an audit log of every question for admins; a Grafana dashboard (`make up-observability`) for requests, latency, model calls and the circuit breakers, tokens, rate limits, guardrails, tools and feedback; an answer evaluation (`make eval-answers`) whose latest results are in [docs/evals/answers.md](docs/evals/answers.md); and smoke tests against the running stack, including the chat UI in a real browser (`make e2e`). [Getting started](#getting-started) brings up the stack that exists today, and [Development](#development) shows how to run the API and the UI, ask the agents from the terminal and run the checks.
 
 ## Contents
 
@@ -102,7 +110,7 @@ More diagrams, all in [docs/architecture](docs/architecture/README.md):
 
 ## Roles and permissions
 
-There are three roles. Permissions are checked in code before every route, tool call and search, so the assistant cannot be talked into skipping them.
+There are three roles, one per Keycloak realm role. Permissions are checked in code before every route, tool call and search, so the assistant cannot be talked into skipping them. The role comes only from the signed-in user's token, never from the request or the conversation.
 
 | Tool or action | Viewer | Analyst | Administrator |
 |---|---|---|---|
@@ -110,8 +118,10 @@ There are three roles. Permissions are checked in code before every route, tool 
 | Python analysis tool | No | Yes | Yes |
 | MCP tools (employee directory, service catalog, incident records) | No | Yes | Yes |
 | Recursive research | No | Yes | Yes |
-| Admin tools (re-index documents, view the audit log, change rate limits, view all feedback) | No | No | Yes |
+| Admin tools (re-index documents, view the audit log, change rate limits, view all feedback, clean up old memory) | No | No | Yes |
 | Document access levels | public, internal | public, internal, confidential | all levels, including restricted |
+
+The table lives in one place in code, [security/policies.py](security/policies.py), and is explained in [security/README.md](security/README.md). Anything not listed there is refused. If a user's role cannot use what a question needs (for example a viewer asking for deep research), the assistant answers with a normal document search and says why.
 
 ## Technology
 
@@ -126,7 +136,7 @@ There are three roles. Permissions are checked in code before every route, tool 
 | Identity | Keycloak |
 | Storage | PostgreSQL, Redis |
 | Tools | FastMCP, isolated Python sandbox |
-| Safety | LLM Guard, Microsoft Presidio, custom checks |
+| Safety | Prompt-injection rules, personal data masking and answer checks in code (ADR-0016) |
 | Observability | LangSmith, Prometheus, Grafana (optional) |
 | Testing | pytest, Ragas, Playwright, Locust |
 | Quality and security checks | ruff, mypy, pre-commit, bandit, pip-audit, gitleaks, Trivy, GitHub Actions |
@@ -144,25 +154,25 @@ enterprise-knowledge-agent/
   rag/            Search: chunk schema, BM25, embeddings, Pinecone index, filters, hybrid retrieval
   security/       Role matrix, authentication, guardrails, rate limiting
   ingestion/      Document parsing, chunking and indexing into Pinecone
-  mcp_server/     MCP server with dummy enterprise data
-  sandbox/        Python sandbox service
+  mcp_server/     MCP server with fictional enterprise data (directory, services, incidents)
+  sandbox/        Python sandbox service, built into its own image from this folder alone
   ui/             Streamlit app and agent activity panel
   data/           Sample Helix Bank documents (data/sample_docs) and ingestion output (data/index, not committed)
-  evals/          Evaluation question sets and runners (retrieval hit rate and MRR)
+  evals/          Evaluation question sets and runners (retrieval hit rate and MRR, answer quality)
   tests/          Unit, integration, graph, security, resilience and end-to-end tests
   docs/           Architecture diagrams, decision records, assumptions, threat model, testing
   infra/          Config for the Docker services: Keycloak realm, Postgres init, Prometheus, Grafana
   .github/        CI workflow
-  Dockerfile      Images for the API and the UI (the MCP server target is added later)
+  Dockerfile      Images for the API, the UI and the MCP server (the sandbox has its own)
   compose.yaml    The full local stack; compose.dev.yaml adds live code reload
 ```
 
-Folders are added as their features are built. So far `api/`, `core/`, `security/` (roles and access levels), `rag/`, `ingestion/`, `agents/`, `ui/`, `data/`, `evals/`, `infra/` and `tests/` exist. The `api/`, `agents/`, `ui/`, `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work. Prompts are Markdown files in `agents/prompts/`, kept out of the code.
+The `api/`, `agents/`, `ui/`, `security/`, `sandbox/`, `mcp_server/`, `rag/`, `ingestion/`, `data/` and `evals/` folders each have a README explaining how they work. Prompts are Markdown files in `agents/prompts/`, kept out of the code.
 
 The code is one Python project with one `pyproject.toml` and one lock file, with two deliberate boundaries:
 
-- The sandbox has its own small dependency file (`sandbox/requirements.txt`), so its image contains only data-analysis libraries, with no project code and no secrets.
-- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`), and the UI's image is built from its own dependency group (Streamlit and httpx), so it does not contain the backend at all. Four more contracts keep `core/` at the bottom layer, keep `rag/` and `security/` from importing the agents above them, and keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services.
+- The sandbox has its own small dependency file (`sandbox/requirements.txt`), so its image contains only Python's standard library, with no project code and no secrets. The image is built from the `sandbox/` folder alone, and import-linter checks that the sandbox and the app never import each other.
+- The UI never imports backend code. It talks to the API only over HTTP and server-sent events. CI enforces this with [import-linter](https://import-linter.readthedocs.io/) (the contracts are in `pyproject.toml`), and the UI's image is built from its own dependency group (Streamlit and httpx), so it does not contain the backend at all. More contracts keep `core/` at the bottom layer, keep `rag/` and `security/` from importing the agents above them, keep `ingestion/` (an offline job) and `evals/` (run by hand) out of the running services, and keep the MCP server independent of the agents and the API.
 
 ## Getting started
 
@@ -228,15 +238,13 @@ The code is one Python project with one `pyproject.toml` and one lock file, with
 
    To see each run in LangSmith, also set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. See [agents/README.md](agents/README.md).
 
-5. Open the chat at <http://localhost:8501>. Pick a role in the sidebar, then ask a question or click one of the example questions. The answer streams in on the left and the agent activity panel on the right shows each step. Changing the role starts a new conversation, so you can compare what each role may read. The UI is described in [ui/README.md](ui/README.md).
+5. Open the chat at <http://localhost:8501> and sign in as one of the test users below. Ask a question or click one of the example questions. The answer streams in on the left and the agent activity panel on the right shows each step. The sidebar shows your name, your role and the tools your role may use. Sign out and in as another user to compare what each role may read. The UI is described in [ui/README.md](ui/README.md).
 
    The search and the answers use the documents loaded in step 4 (`data/index/` is mounted read-only into the API container).
 
-Login with the test users below replaces the role picker once `feature/auth-rbac` is merged.
-
 ### Test users
 
-The Keycloak realm file ([infra/keycloak/realm-helix.json](infra/keycloak/realm-helix.json)) creates one user per role. The passwords are for this local demo only.
+The Keycloak realm file ([infra/keycloak/realm-helix.json](infra/keycloak/realm-helix.json)) creates one user per role. The passwords are for this local demo only. Keycloak locks an account for a short while after 5 wrong passwords.
 
 | User | Role | Password |
 |---|---|---|
@@ -274,7 +282,7 @@ make down-volumes    # stop the services and delete all local data
 | Small images | The images are built in stages. The final API stage holds only the installed packages, not the source or build tools. The UI image holds only Streamlit, httpx and the `ui/` folder: no backend code. Base images use exact version tags. |
 | Secrets | Passwords come from `.env` and have no defaults, so the stack refuses to start without them. Each service receives only the variables it needs. Keycloak has its own database user and cannot read the application's tables. |
 | Image scan | CI builds the API and UI images and scans them with Trivy. It fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. Run the same scan locally with `make scan-image`. |
-| Monitoring (optional) | `make up-observability` adds Prometheus, which reads `/metrics` from the API, and Grafana, already connected to Prometheus. Dashboards come with `feature/observability-evals`. |
+| Monitoring (optional) | `make up-observability` adds Prometheus, which reads `/metrics` from the API, and Grafana with the "Helix Knowledge Assistant" dashboard already loaded: requests and latency, answer time, model calls by provider, the circuit breakers, tokens, rate limits, guardrail blocks, tools, searches and feedback. |
 
 ## Development
 
@@ -285,10 +293,11 @@ make install     # install all dependencies and the pre-commit hooks
 make run-api     # start only the API on http://localhost:8000 with auto-reload
 ```
 
-Open <http://localhost:8000/healthz> to check it is running, or <http://localhost:8000/docs> for the interactive API docs. With a model key in `.env`, ask a question and watch the events stream back:
+Open <http://localhost:8000/healthz> to check it is running, or <http://localhost:8000/docs> for the interactive API docs. Every other endpoint needs a login token from Keycloak, so start Keycloak too (`docker compose up -d keycloak`, or the whole stack with `make up`). Then, with a model key in `.env`, ask a question as one of the test users and watch the events stream back:
 
 ```bash
 make stream Q="The PayHub database connection pool is exhausted. What should I do?" ROLE=analyst
+curl -H "Authorization: Bearer $(make -s token ROLE=admin)" http://localhost:8000/me
 ```
 
 Then start the chat UI in a second terminal and open <http://localhost:8501>:
@@ -297,7 +306,7 @@ Then start the chat UI in a second terminal and open <http://localhost:8501>:
 make run-ui      # reloads when you edit a file in ui/
 ```
 
-Until login is added (`feature/auth-rbac`), the role is taken from the `X-Dev-Role` header (the UI's role picker sends it), which a production API refuses. The endpoint is described in [api/README.md](api/README.md). Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
+`make token ROLE=...` signs a test user in and prints a 5-minute access token. The endpoints and how tokens are checked are described in [api/README.md](api/README.md). Settings are read from environment variables or a `.env` file; copy `.env.example` to get started. `LOG_FORMAT=console` gives readable logs while you work. When `POSTGRES_URL` and `REDIS_URL` are empty, `/readyz` skips those checks, so the API runs fine on its own.
 
 To work inside the Docker stack instead, run `make up-dev`. The API and UI containers then run the code from your machine and reload when you save a file. A rebuild is only needed after you add a dependency.
 
@@ -320,7 +329,12 @@ Run `make` on its own to list every task. The main ones:
 | `make search Q="..." ROLE=analyst` | Search the index as a role and print the ranked, cited chunks |
 | `make eval-retrieval` | Hit rate and MRR for several alpha values, saved to `docs/evals/retrieval.md` |
 | `make ask Q="..." ROLE=analyst` / `make chat` | Ask the agents one question, or have a conversation, in the terminal |
-| `make stream Q="..." ROLE=analyst` | Ask the running API and print the streamed events, as the UI receives them |
+| `make eval-answers` | Ask the answer question set through the real agents and score it (`docs/evals/answers.md`) |
+| `make e2e` / `make load` | Smoke tests (with a real browser) and an optional load test against the running stack |
+| `make stream Q="..." ROLE=analyst` | Sign in as the test user for ROLE, ask the running API and print the streamed events, as the UI receives them |
+| `make test-sandbox` | Escape tests inside the running sandbox container |
+| `make token ROLE=admin` | Print an access token for a test user, for calling the API by hand |
+| `make rate-limits` | Show the rate limits in force (as the test admin) |
 | `make diagrams` | Redraw the agent graph from the code (`docs/architecture/03-agent-graph.generated.md`) |
 
 The pre-commit hooks run ruff, mypy, the import check, gitleaks and a few file checks before each commit. CI runs the same checks on every pull request, plus a gitleaks scan of the full history, a check of the Compose files and a Trivy scan of the API and UI images.
@@ -344,9 +358,12 @@ make test-unit       # fast unit tests only
 make test-security   # security tests only
 make test-live       # tests that call the real cloud services (uses your API keys)
 make test-pinecone-local  # search tests against Pinecone's emulator in Docker (no account needed)
+make test-keycloak   # login tests against the real Keycloak in Docker
 ```
 
-The chat UI is tested without a browser: Streamlit's `AppTest` runs the page in the test process against replies recorded from the real API. `make eval` (answer-quality evaluations), `make e2e` (browser tests against the running stack) and `make load` are added with `feature/observability-evals`.
+The tests do not need Keycloak either: they sign their own tokens with a key pair made for the test run, and the test apps trust that key instead of Keycloak's. `make test-keycloak` checks the same code against the real realm.
+
+The chat UI is tested without a browser: Streamlit's `AppTest` runs the page in the test process against replies recorded from the real API. `make eval-answers` (answer quality, uses model quota), `make e2e` (smoke tests against the running stack, including the chat UI in Chromium through Playwright; run `uv run playwright install chromium` once) and `make load` (an optional Locust load test) need the stack running.
 
 The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 
@@ -358,12 +375,13 @@ The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 | [docs/adr](docs/adr/README.md) | Architecture decision records: what was decided and why |
 | [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) | Assumptions and trade-offs |
 | [docs/security/THREAT_MODEL.md](docs/security/THREAT_MODEL.md) | Threats, the controls against them and the tests that prove them |
+| [docs/security/PROMPT_INJECTION.md](docs/security/PROMPT_INJECTION.md) | How prompt injection is defended against, layer by layer |
 | [docs/TESTING.md](docs/TESTING.md) | Testing strategy, test layers and CI checks |
 | [docs/evals](docs/evals/README.md) | Evaluation results, starting with retrieval |
 
 ## Roadmap
 
-Each feature is built on its own branch, merged into `develop`, and `develop` is merged into `main` when everything is complete.
+Each feature is built on its own branch, merged into `develop`, and `develop` is merged into `main` when everything is complete. All 19 are built; each branch's tests are listed in [docs/TESTING.md](docs/TESTING.md#test-focus-per-branch), and each design change made while building is recorded in its decision record under "Changes during implementation".
 
 | # | Branch | What it adds |
 |---|---|---|

@@ -18,9 +18,17 @@ The job description stresses failover and treating models as external services, 
 
 - **Primary:** Google **Gemini Flash** through the Google AI Studio free tier (recommended model `gemini-3.6-flash`). It handles supervisor routing, tool calling, research, aggregation and answers.
 - **Fallback:** **OpenRouter** with a free, non-Google model (recommended model `nvidia/nemotron-3.5-super-vl:free`). It runs on different companies' infrastructure, so failover survives a full Google outage. Google models are left out on purpose, so one outage cannot take out both providers.
-- Both sit behind one **provider-neutral LLM gateway** (LangChain chat models): a time limit on every call, a few retries inside each provider, and a **circuit breaker per provider** (closed → open after repeated failures → half-open probe). The breaker is added with `feature/resilience`. Provider order and thresholds are set in code and config.
+- Both sit behind one **provider-neutral LLM gateway** (LangChain chat models): a time limit on every call, a few retries inside each provider, and a **circuit breaker per provider** (closed → open after repeated failures → half-open probe). Provider order and thresholds are set in code and config.
 - **Model names are chosen in `.env` only** (`GEMINI_MODEL`, `OPENROUTER_MODEL`), with no default in code. A provider with a key but no model stops the app at startup with a message naming the missing setting.
 - Each switch is recorded on the answer (`llm_calls`, "written by"), as a log line, a Prometheus counter and a LangSmith trace step. The demo forces Gemini to fail, and the trace shows OpenRouter taking over.
+
+## Changes during implementation (`feature/resilience`)
+
+- The circuit breaker is in [agents/breaker.py](../../agents/breaker.py), one per provider, inside the gateway (`LLMGateway._call`); the agents did not change.
+- A "rate limited" reply (HTTP 429) opens the breaker at once rather than counting towards the five failures: a live research run showed Gemini's free tier refusing every call for about a minute once its per-minute limit is reached, so further tries only added waiting.
+- An answer in the wrong shape moves to the next provider but does not count against the breaker: the provider is up.
+- Retries with back-off inside one provider are left to the provider SDKs (`LLM_MAX_RETRIES`).
+- Every failure and what the user sees is listed in [07-failure-handling.md](../architecture/07-failure-handling.md), with its test.
 
 ## Consequences
 

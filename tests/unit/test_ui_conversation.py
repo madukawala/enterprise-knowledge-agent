@@ -112,8 +112,8 @@ def test_the_panel_details_are_collected_by_kind() -> None:
 
 
 def test_events_from_a_newer_api_are_kept_and_change_nothing_else() -> None:
-    turn = _turn({"type": "tool_call", "tool": "incident_records"})
-    assert turn.other == [{"type": "tool_call", "tool": "incident_records"}]
+    turn = _turn({"type": "approval_needed", "tool": "reindex"})
+    assert turn.other == [{"type": "approval_needed", "tool": "reindex"}]
     assert turn.status is TurnStatus.STREAMING
 
 
@@ -134,3 +134,9 @@ def test_a_conversation_is_busy_while_an_answer_streams() -> None:
     assert conversation.busy
     conversation.turns[0].apply(_end())
     assert not conversation.busy
+
+
+def test_tool_calls_are_collected_for_the_panel() -> None:
+    turn = _turn({"type": "tool_call", "tool": "service_owner", "ok": True})
+    assert turn.tools == [{"type": "tool_call", "tool": "service_owner", "ok": True}]
+    assert turn.other == []

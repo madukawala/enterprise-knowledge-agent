@@ -12,6 +12,11 @@
 3. **Search** with `HybridRetriever.search(request, role=...)`. The role
    comes from the state, which the caller set from the login token. The
    permission filter is added inside the search (rag/filters.py).
+4. **Screen what came back.** Every chunk is cleaned (HTML, hidden text,
+   invisible characters, images removed) and scanned with the same
+   injection rules as the question. A chunk that carries instructions for
+   the assistant (indirect prompt injection) is left out, and the answer
+   says a source was left out. The model only ever sees cleaned text.
 
 Failure containment:
 
@@ -27,6 +32,7 @@ The search plan is made once per question. A retry reuses it, so a retry
 costs no model quota.
 """
 
+from collections.abc import Sequence
 from datetime import date
 
 from pydantic import ValidationError
@@ -44,10 +50,12 @@ from agents.state import (
     SearchSummary,
 )
 from core.errors import LLMUnavailableError, RetrievalError
-from core.logging import get_logger
+from core.logging import SECURITY_LOGGER, get_logger
 from rag.filters import SearchFilters
-from rag.retrieval import MAX_QUERY_CHARS, RerankStatus, SearchRequest
+from rag.retrieval import MAX_QUERY_CHARS, RerankStatus, SearchHit, SearchRequest
 from rag.schema import Collection, Department
+from security.guardrails.injection import Finding, scan
+from security.guardrails.text import clean_retrieved
 
 log = get_logger(__name__)
 
@@ -126,6 +134,29 @@ def describe(summary: SearchSummary) -> str:
     )
 
 
+_security_log = get_logger(SECURITY_LOGGER)
+
+
+def screen(hits: Sequence[SearchHit]) -> tuple[list[SearchHit], list[tuple[str, Finding]]]:
+    """Clean each retrieved chunk, and leave out the ones carrying injected instructions.
+
+    Returns the hits to use (with cleaned text) and, for each one left out,
+    its document ID and what was found.
+    """
+    kept: list[SearchHit] = []
+    dropped: list[tuple[str, Finding]] = []
+    for hit in hits:
+        text = clean_retrieved(hit.chunk.text)
+        finding = scan(text)
+        if finding.flagged:
+            dropped.append((hit.chunk.doc_id, finding))
+            continue
+        if text != hit.chunk.text:
+            hit = hit.model_copy(update={"chunk": hit.chunk.model_copy(update={"text": text})})
+        kept.append(hit)
+    return kept, dropped
+
+
 class RetrievalAgent(AgentNode):
     name = AgentName.RETRIEVAL
 
@@ -188,7 +219,24 @@ class RetrievalAgent(AgentNode):
             took_ms=result.took_ms,
             relaxed=relax,
         )
+        hits, dropped = screen(result.hits)
         limits = []
+        if dropped:
+            for doc_id, finding in dropped:
+                for category in finding.categories:
+                    self.context.metrics.guardrail_blocks.labels(
+                        guard="retrieved", category=category.value
+                    ).inc()
+                _security_log.warning(
+                    "indirect_injection_dropped",
+                    doc_id=doc_id,
+                    categories=[c.value for c in finding.categories],
+                )
+            documents = ", ".join(sorted({doc_id for doc_id, _ in dropped}))
+            limits.append(
+                f"{len(dropped)} search result{'s were' if len(dropped) != 1 else ' was'} left "
+                f"out because it contained instructions aimed at the assistant ({documents})."
+            )
         if result.failed_collections:
             missed = ", ".join(c.value for c in result.failed_collections)
             limits.append(
@@ -201,7 +249,7 @@ class RetrievalAgent(AgentNode):
         update.update(
             {
                 "search": summary,
-                "hits": list(result.hits),
+                "hits": hits,
                 # A successful search clears an error from an earlier attempt.
                 "errors": {self.name.value: None} if self._had_error(state) else {},
                 "completed": [self.name],
@@ -223,6 +271,7 @@ class RetrievalAgent(AgentNode):
                     state.get("messages", []),
                     today=context.today(),
                     history=context.history_messages,
+                    summary=state.get("summary") or "",
                 ),
                 purpose="search_plan",
             )

@@ -11,8 +11,11 @@ NODE_LABELS = {
     "input_guard": "Input guard",
     "supervisor": "Supervisor",
     "retrieval": "Retrieval agent",
+    "research": "Research agent",
     "response": "Response agent",
     "validator": "Validator",
+    "memory": "Memory writer",
+    "tools": "Tools agent",
 }
 
 INTENT_LABELS = {
@@ -134,3 +137,52 @@ def source_line(citation: Mapping[str, Any]) -> str:
         f"[{citation.get('number')}] **{citation.get('doc_id')}** {citation.get('title')}"
         f", section: {citation.get('section')}"
     )
+
+
+def describe_wait(seconds: int) -> str:
+    """'45 seconds', '3 minutes', '5 hours 12 minutes': for the user, not exact."""
+    if seconds < 60:
+        return f"{seconds} second{'s' if seconds != 1 else ''}"
+    minutes = -(-seconds // 60)
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    hours, minutes = divmod(minutes, 60)
+    text = f"{hours} hour{'s' if hours != 1 else ''}"
+    return text + (f" {minutes} minute{'s' if minutes != 1 else ''}" if minutes else "")
+
+
+def research_line(research: Mapping[str, Any]) -> str:
+    """'Plan written by the model and run in the sandbox. 6 batches, depth 2, 14 sources.'"""
+    source = (
+        "Plan written by the model and run in the sandbox"
+        if research.get("plan_source") == "sandbox"
+        else "Fixed plan: the last twelve months by quarter"
+    )
+    batches = research.get("batches") or []
+    text = (
+        f"{source}. {len(batches)} batches, depth {research.get('max_depth', 1)}, "
+        f"{research.get('sources', 0)} sources, {research.get('tokens_used', 0):,} tokens."
+    )
+    if research.get("stopped_by_budget"):
+        text += " Stopped at the token budget."
+    return text
+
+
+def batch_line(batch: Mapping[str, Any]) -> str:
+    """'  2026 Q1: 8 sources, 3 findings (split)'"""
+    indent = "\u00a0\u00a0" * (int(batch.get("depth", 1)) - 1)
+    if batch.get("error"):
+        return f"{indent}{batch.get('label')}: failed ({batch.get('error')})"
+    text = f"{indent}{batch.get('label')}: {batch.get('hits', 0)} sources"
+    if batch.get("split"):
+        return text + ", split into smaller batches"
+    return text + f", {batch.get('findings', 0)} findings"
+
+
+def tool_line(call: Mapping[str, Any]) -> str:
+    """'service_owner(service=PayHub): 1 found, 120 ms'"""
+    args = ", ".join(f"{k}={v}" for k, v in (call.get("arguments") or {}).items())
+    head = f"{call.get('tool')}({args})"
+    if not call.get("ok"):
+        return f"{head}: failed ({call.get('error') or 'no reason given'})"
+    return f"{head}: {call.get('items', 0)} found, {duration(call.get('duration_ms'))}"
