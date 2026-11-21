@@ -1,10 +1,10 @@
 """One way for every agent to call a language model, with failover.
 
-Agents never talk to Gemini or OpenRouter directly. They ask the gateway for
+Agents never talk to Claude or Gemini directly. They ask the gateway for
 either plain text or a filled-in Pydantic model, and the gateway:
 
-1. tries each provider that has a key, in order: Gemini, then OpenRouter
-   (ADR-0002);
+1. tries each provider that has a key, in order: Claude, then Gemini
+   (ADR-0017);
 2. limits every call to `LLM_TIMEOUT_SECONDS`;
 3. treats an error, a timeout or output that does not fit the schema as a
    failure of that provider, and moves on to the next one;
@@ -19,6 +19,19 @@ keeps failing, or that answers "rate limited", is skipped for a while and
 then probed with one call, so questions do not wait for a provider that is
 down. Retries with back-off inside one provider are done by the provider's
 own SDK (`LLM_MAX_RETRIES`).
+
+Claude is paid per token, so `_chat_model` sets it up to spend as little as
+possible:
+
+- no thinking and low effort: the agents' tasks are routing, short plans
+  and answers from sources they are given, which do not need long
+  reasoning, and thinking tokens are billed as output;
+- a cap on the length of every reply (`ANTHROPIC_MAX_TOKENS`);
+- filled-in models use Claude's own JSON output instead of a tool call,
+  which sends fewer tokens and always returns valid JSON;
+- the rules at the start of every prompt (the system message) are marked
+  for Claude's prompt cache. The same rules are sent with every question,
+  and a cached read costs a tenth of the normal price.
 """
 
 import asyncio
@@ -28,7 +41,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, SecretStr
 
@@ -47,11 +60,39 @@ ResultT = TypeVar("ResultT")
 
 @dataclass(frozen=True)
 class ChatProvider:
-    """One configured model, e.g. ("gemini", "gemini-3.6-flash", <chat model>)."""
+    """One configured model, e.g. ("anthropic", "claude-haiku-5-5", <chat model>)."""
 
     name: str
     model: str
     chat: BaseChatModel
+    # How `with_structured_output` asks for a filled-in model. None keeps
+    # LangChain's default for the provider.
+    structured_method: str | None = None
+    # Mark the system message for the provider's prompt cache (Claude only).
+    cache_system_prompt: bool = False
+
+    def prepare(self, messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+        """The messages as this provider should receive them."""
+        if not self.cache_system_prompt:
+            return list(messages)
+        return [_cached(message) for message in messages]
+
+
+def _cached(message: BaseMessage) -> BaseMessage:
+    """Ask Claude to cache everything up to the end of the system message.
+
+    The system message holds the shared rules and the task of one agent. It
+    is the same for every question on a day (it includes today's date), so
+    after the first call it is read from the cache at a tenth of the price.
+    The question and sources come after it and are never cached. A prompt
+    shorter than the model's minimum (512 tokens on current models) is
+    simply not cached; nothing fails.
+    """
+    if not isinstance(message, SystemMessage) or not isinstance(message.content, str):
+        return message
+    return SystemMessage(
+        [{"type": "text", "text": message.content, "cache_control": {"type": "ephemeral"}}]
+    )
 
 
 class _UnusableOutputError(Exception):
@@ -76,7 +117,7 @@ class LLMGateway:
 
         async def invoke(provider: ChatProvider) -> tuple[SchemaT, AIMessage]:
             runnable = self._structured_runnable(provider, schema)
-            output = await runnable.ainvoke(list(messages))
+            output = await runnable.ainvoke(provider.prepare(messages))
             parsed = output.get("parsed")
             if not isinstance(parsed, schema):
                 raise _UnusableOutputError(f"output did not match {schema.__name__}")
@@ -89,7 +130,7 @@ class LLMGateway:
         """Ask for a plain text reply."""
 
         async def invoke(provider: ChatProvider) -> tuple[str, AIMessage]:
-            reply = await provider.chat.ainvoke(list(messages))
+            reply = await provider.chat.ainvoke(provider.prepare(messages))
             if not isinstance(reply, AIMessage) or not reply.text.strip():
                 raise _UnusableOutputError("empty reply")
             return reply.text.strip(), reply
@@ -102,7 +143,10 @@ class LLMGateway:
         # Built once per provider and schema, then reused.
         key = (provider.name, schema)
         if key not in self._structured:
-            self._structured[key] = provider.chat.with_structured_output(schema, include_raw=True)
+            options = {"method": provider.structured_method} if provider.structured_method else {}
+            self._structured[key] = provider.chat.with_structured_output(
+                schema, include_raw=True, **options
+            )
         return self._structured[key]
 
     async def _call(
@@ -192,9 +236,6 @@ def _record(
     )
 
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-
 class LLMSetupError(Exception):
     """No language model is configured. The message says what to do."""
 
@@ -206,14 +247,12 @@ def build_gateway(settings: Settings, *, metrics: AgentMetrics | None = None) ->
     without its model (core/config.py).
     """
     providers = [
-        ChatProvider(name=name, model=model, chat=_chat_model(name, key, model, settings))
-        for name, key, model in settings.llm_providers()
+        _provider(name, key, model, settings) for name, key, model in settings.llm_providers()
     ]
     if not providers:
         raise LLMSetupError(
-            "No language model is configured. Add GEMINI_API_KEY and GEMINI_MODEL to .env, "
-            "and ideally OPENROUTER_API_KEY and OPENROUTER_MODEL as the fallback "
-            "(see .env.example)."
+            "No language model is configured. Add ANTHROPIC_API_KEY and CLAUDE_MODEL to .env, "
+            "and ideally GEMINI_API_KEY and GEMINI_MODEL as the backup (see .env.example)."
         )
     if len(providers) == 1:
         log.warning("llm_no_fallback", provider=providers[0].name)
@@ -244,33 +283,41 @@ def build_gateway(settings: Settings, *, metrics: AgentMetrics | None = None) ->
 _STATE_VALUE = {BreakerState.CLOSED: 0, BreakerState.HALF_OPEN: 1, BreakerState.OPEN: 2}
 
 
-def _chat_model(name: str, key: SecretStr, model: str, settings: Settings) -> BaseChatModel:
-    """The LangChain chat model for one provider."""
+def _provider(name: str, key: SecretStr, model: str, settings: Settings) -> ChatProvider:
+    """One provider with its chat model, set up for the agents."""
     # Imported here so the rest of the package (and the tests) never load
     # the provider SDKs unless a real model is used.
+    if name == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        claude = ChatAnthropic(
+            model=model,
+            anthropic_api_key=key,
+            max_tokens=settings.anthropic_max_tokens,
+            # No thinking, and low effort: see the module docstring. The
+            # temperature is left at Claude's default, because the current
+            # models refuse any other value.
+            thinking={"type": "disabled"},
+            output_config={"effort": settings.anthropic_effort},
+            default_request_timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
+        return ChatProvider(
+            name,
+            model,
+            claude,
+            structured_method="json_schema",
+            cache_system_prompt=True,
+        )
     if name == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(
+        gemini = ChatGoogleGenerativeAI(
             model=model,
             google_api_key=key,
             temperature=settings.llm_temperature,
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         )
-    if name == "openrouter":
-        # OpenRouter speaks the OpenAI API, so the OpenAI client is used with
-        # OpenRouter's address.
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(
-            model_name=model,
-            openai_api_key=key,
-            openai_api_base=OPENROUTER_BASE_URL,
-            temperature=settings.llm_temperature,
-            request_timeout=settings.llm_timeout_seconds,
-            max_retries=settings.llm_max_retries,
-            # Token counts are only sent with streamed replies when asked for.
-            stream_usage=True,
-        )
+        return ChatProvider(name, model, gemini)
     raise LLMSetupError(f"Unknown language model provider: {name}")

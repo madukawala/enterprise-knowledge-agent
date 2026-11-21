@@ -124,7 +124,7 @@ async def test_the_events_carry_what_the_panel_shows() -> None:
     end = events[-1]
     assert isinstance(end, ResponseEndEvent)
     assert end.kind is AnswerKind.ANSWERED
-    assert end.written_by == "gemini / gemini-test"
+    assert end.written_by == "anthropic / anthropic-test"
     assert [c.doc_id for c in end.citations] == ["RB-001"]
     assert end.markdown.startswith("Raise the pool size [1].")
     assert [call.purpose for call in end.llm_calls] == ["supervisor", "search_plan", "answer"]
@@ -162,9 +162,9 @@ async def test_a_rewrite_starts_a_new_response_and_the_end_has_the_final_text() 
 
 
 async def test_a_model_failing_mid_answer_restarts_the_text_with_the_next_model() -> None:
-    gemini = _model(PartialFailure("The pool limit", RuntimeError("connection reset")))
-    openrouter = ScriptedChatModel(texts=["Restart the workers [1]."])
-    agents = agent_service(gateway(gemini, openrouter), FakeSearcher([result_with(hit("RB-1"))]))
+    claude = _model(PartialFailure("The pool limit", RuntimeError("connection reset")))
+    gemini = ScriptedChatModel(texts=["Restart the workers [1]."])
+    agents = agent_service(gateway(claude, gemini), FakeSearcher([result_with(hit("RB-1"))]))
 
     events = await _events(agents)
 
@@ -174,10 +174,10 @@ async def test_a_model_failing_mid_answer_restarts_the_text_with_the_next_model(
     assert _streamed_text(after_switch) == "Restart the workers [1]."
     degraded = [e for e in events if isinstance(e, DegradedEvent)]
     assert [d.dependency for d in degraded] == ["language_model"]
-    assert "openrouter / openrouter-test" in degraded[0].message
+    assert "gemini / gemini-test" in degraded[0].message
     final = events[-1]
     assert isinstance(final, ResponseEndEvent)
-    assert final.written_by == "openrouter / openrouter-test"
+    assert final.written_by == "gemini / gemini-test"
 
 
 async def test_not_found_never_flashes_up_before_the_friendly_message() -> None:

@@ -6,7 +6,7 @@ Every feature branch ships with its own tests, and CI must pass before a branch 
 
 ## Principles
 
-- **Deterministic and free by default.** Unit, integration and graph tests never call a real language model (Gemini or OpenRouter). LLM calls use fake chat models or recorded responses, so tests are fast, repeatable and use no free-tier quota.
+- **Deterministic and free by default.** Unit, integration and graph tests never call a real language model (Claude or Gemini). LLM calls use fake chat models or recorded responses, so tests are fast, repeatable, and cost nothing.
 - **Live tests are opt-in.** Tests that need real cloud services (LLMs, Pinecone cloud, LangSmith) carry the `live` marker and run only with `make test-live` or `make eval`. CI does not run them.
 - **Security is tested as behaviour.** Every security rule has a test that shows an attack being blocked. A rule without a test is not done.
 - **Failures are tested too.** Every row of the error-handling table has a resilience test.
@@ -19,7 +19,7 @@ Every feature branch ships with its own tests, and CI must pass before a branch 
 | **Integration** | `integration` | FastAPI endpoints, SSE event order, Redis rate limiter, Postgres checkpointer and store, Pinecone Local, MCP server and tools, Python sandbox | `httpx` AsyncClient, `testcontainers` / CI service containers, `respx` | Yes |
 | **Graph / agent** | `graph` | Full LangGraph runs with fake LLMs: the right agent for each question type, parallel sub-agents, research depth limit, approval interrupt and resume, one agent failing without breaking the run | `pytest`, in-memory checkpointer | Yes |
 | **Security** | `security` | Role checks per endpoint and tool, bad or expired tokens, direct and indirect prompt injection, PII leaks, system-prompt leakage, sandbox escapes, rate-limit abuse | `pytest` + attack dataset `tests/security/attacks.yaml` | Yes |
-| **Resilience** | `resilience` | Gemini fails → OpenRouter takes over; both down → clear degraded answer; Pinecone, Redis or MCP down → reduced mode; retries and back-off; request cancellation | `respx` fault injection, fixtures that stop containers | Yes |
+| **Resilience** | `resilience` | Claude fails → Gemini takes over; both down → clear degraded answer; Pinecone, Redis or MCP down → reduced mode; retries and back-off; request cancellation | `respx` fault injection, fixtures that stop containers | Yes |
 | **RAG and answer quality** | `eval`, `live` | Retrieval hit rate, MRR, context precision and recall; answer faithfulness, relevancy and citation accuracy; routing accuracy | Ragas, LangSmith datasets and evaluators, golden set in `evals/datasets/` | No (manual; results in `docs/evals/`) |
 | **End-to-end** | `e2e` | One smoke test per role: log in through Keycloak → ask → see the streamed answer and the activity panel | Playwright (Python) against `docker compose up` | Nightly / manual |
 | **Load** *(optional)* | — | Concurrent users against the async API; the rate limiter returns 429s without other errors | Locust | Manual |

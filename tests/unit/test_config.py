@@ -61,14 +61,14 @@ def test_empty_keys_count_as_not_set() -> None:
     """`.env.example` lists keys with empty values; those must mean "not set"."""
     settings = Settings(
         _env_file=None,
-        gemini_api_key="",  # type: ignore[arg-type]
-        openrouter_api_key="  ",  # type: ignore[arg-type]
+        anthropic_api_key="",  # type: ignore[arg-type]
+        gemini_api_key="  ",  # type: ignore[arg-type]
         pinecone_api_key="",  # type: ignore[arg-type]
         langsmith_api_key="",  # type: ignore[arg-type]
         postgres_url="",  # type: ignore[arg-type]
     )
+    assert settings.anthropic_api_key is None
     assert settings.gemini_api_key is None
-    assert settings.openrouter_api_key is None
     assert settings.pinecone_api_key is None
     assert settings.langsmith_api_key is None
     assert settings.postgres_url is None
@@ -81,17 +81,24 @@ def test_empty_keys_count_as_not_set() -> None:
 
 def test_model_names_have_no_default() -> None:
     settings = Settings(_env_file=None)
-    assert (settings.gemini_model, settings.openrouter_model) == (None, None)
+    assert (settings.claude_model, settings.gemini_model) == (None, None)
     assert settings.llm_providers() == []
 
 
-@pytest.mark.parametrize("provider", ["gemini", "openrouter"])
-def test_a_key_without_its_model_stops_startup_with_a_clear_message(provider: str) -> None:
+@pytest.mark.parametrize(
+    ("field", "key_var", "model_var"),
+    [
+        ("anthropic_api_key", "ANTHROPIC_API_KEY", "CLAUDE_MODEL"),
+        ("gemini_api_key", "GEMINI_API_KEY", "GEMINI_MODEL"),
+    ],
+)
+def test_a_key_without_its_model_stops_startup_with_a_clear_message(
+    field: str, key_var: str, model_var: str
+) -> None:
     with pytest.raises(ValidationError) as error:
-        Settings(_env_file=None, **{f"{provider}_api_key": "a-key"})  # type: ignore[arg-type]
+        Settings(_env_file=None, **{field: "a-key"})  # type: ignore[arg-type]
     message = str(error.value)
-    upper = provider.upper()
-    assert f"{upper}_API_KEY is set, so {upper}_MODEL must be set too" in message
+    assert f"{key_var} is set, so {model_var} must be set too" in message
     # The key itself is never repeated in the error.
     assert "a-key" not in message
 
@@ -103,27 +110,27 @@ def test_an_empty_model_counts_as_missing() -> None:
 
 def test_every_missing_model_is_reported_at_once() -> None:
     with pytest.raises(ValidationError) as error:
-        Settings(_env_file=None, gemini_api_key="g", openrouter_api_key="o")  # type: ignore[arg-type]
+        Settings(_env_file=None, anthropic_api_key="a", gemini_api_key="g")  # type: ignore[arg-type]
+    assert "CLAUDE_MODEL" in str(error.value)
     assert "GEMINI_MODEL" in str(error.value)
-    assert "OPENROUTER_MODEL" in str(error.value)
 
 
 def test_a_model_without_its_key_is_allowed_and_unused() -> None:
-    settings = Settings(_env_file=None, openrouter_model="or-model")  # type: ignore[arg-type]
+    settings = Settings(_env_file=None, claude_model="claude-model")
     assert settings.llm_providers() == []
 
 
 def test_providers_with_key_and_model_are_listed_in_failover_order() -> None:
     settings = Settings(
         _env_file=None,
-        openrouter_api_key="o",  # type: ignore[arg-type]
-        openrouter_model="or-model",
         gemini_api_key="g",  # type: ignore[arg-type]
         gemini_model="gemini-model",
+        anthropic_api_key="a",  # type: ignore[arg-type]
+        claude_model="claude-model",
     )
     assert [(name, model) for name, _key, model in settings.llm_providers()] == [
+        ("anthropic", "claude-model"),
         ("gemini", "gemini-model"),
-        ("openrouter", "or-model"),
     ]
 
 

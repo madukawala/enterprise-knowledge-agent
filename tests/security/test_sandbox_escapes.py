@@ -134,7 +134,7 @@ def test_the_child_runs_with_an_empty_environment_and_its_own_folder(
         seen.update(kwargs, command=args[0])
         return real_run(*args, **kwargs)
 
-    monkeypatch.setenv("GEMINI_API_KEY", "must-not-leak")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-leak")
     monkeypatch.setattr(runner.subprocess, "run", spy)
 
     _run("result = 1")

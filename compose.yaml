@@ -82,10 +82,12 @@ services:
       # Language models, document search and tracing. Each may be left
       # empty: without a model key /chat answers 503, and without Pinecone
       # the agents answer that document search is unavailable.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-}
+      ANTHROPIC_MAX_TOKENS: ${ANTHROPIC_MAX_TOKENS:-2000}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-low}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
       PINECONE_API_KEY: ${PINECONE_API_KEY:-}
       PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME:-helix-knowledge}
       # The BM25 parameters saved by `make ingest`, mounted read-only below.

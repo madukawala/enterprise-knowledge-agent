@@ -40,7 +40,7 @@ async def test_a_document_question_is_searched_then_answered_with_citations() ->
     assert run.nodes == ANSWER_PATH
     assert run.answer.kind is AnswerKind.ANSWERED
     assert [c.citation.doc_id for c in run.answer.citations] == ["RB-001", "RB-002"]
-    assert run.answer.written_by == "gemini / gemini-test"
+    assert run.answer.written_by == "anthropic / anthropic-test"
     assert [call.purpose for call in run.llm_calls] == ["supervisor", "search_plan", "answer"]
     request, role = searcher.requests[0]
     assert request.query == "PayHub connection pool exhausted"
@@ -64,7 +64,7 @@ async def test_the_steps_explain_how_the_answer_was_made() -> None:
     assert run.answer.steps == (
         "Understood the request as document question. Plan: Search runbooks; Answer.",
         'Searched runbooks for "pool exhausted". Found 4 matches and kept 1 after re-ranking.',
-        "Wrote the answer from 1 sources with gemini / gemini-test.",
+        "Wrote the answer from 1 sources with anthropic / anthropic-test.",
         "Checked that the cited source was retrieved in this run: passed.",
     )
 
@@ -222,19 +222,19 @@ async def test_a_draft_rejected_twice_is_replaced_by_the_source_list() -> None:
 
 
 async def test_the_fallback_provider_writes_the_answer_when_the_first_fails() -> None:
-    gemini = ScriptedChatModel(
+    claude = ScriptedChatModel(
         structured={
             "SupervisorDecision": [decision("document_question")],
             "SearchPlan": [search_plan("pool")],
         },
         texts=[LLMUnavailableError()],
     )
-    openrouter = ScriptedChatModel(texts=["Restart it [1]."])
+    gemini = ScriptedChatModel(texts=["Restart it [1]."])
     from tests.helpers.agents import gateway
 
     run = await agent_service(
-        gateway(gemini, openrouter), FakeSearcher([result_with(hit("RB-1"))])
+        gateway(claude, gemini), FakeSearcher([result_with(hit("RB-1"))])
     ).ask("pool?", role=Role.VIEWER)
     assert run.answer.kind is AnswerKind.ANSWERED
-    assert run.answer.written_by == "openrouter / openrouter-test"
+    assert run.answer.written_by == "gemini / gemini-test"
     assert run.llm_calls[-1].fallback is True

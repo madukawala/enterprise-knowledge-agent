@@ -119,7 +119,7 @@ def test_an_answer_streams_into_the_chat_and_the_panel(
     assert "Query: _pool exhausted_" in text
     assert "Input check: passed" in text
     assert "Citation check: passed" in text
-    assert "written by gemini / gemini-test" in text
+    assert "written by anthropic / anthropic-test" in text
     assert "3 model calls" in text
     assert _bodies(chat) == [{"message": "Why is the pool exhausted?"}]
     token = page.session_state.session.access_token

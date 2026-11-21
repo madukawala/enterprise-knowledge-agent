@@ -13,8 +13,8 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | Conversation threads and long-term memory | May hold personal or sensitive context; must stay per user |
 | Tool capabilities (MCP data, Python sandbox, admin tools) | Can read enterprise data or change system settings |
 | System prompts and guardrail rules | Leaking them helps attackers plan bypasses |
-| API keys (Gemini, OpenRouter, Pinecone, LangSmith) | Cost and data exposure |
-| LLM and API quota | Exhausting it is a denial of service |
+| API keys (Anthropic, Gemini, Pinecone, LangSmith) | Cost and data exposure; the Anthropic key is paid, so a leaked key spends real money |
+| LLM spend and API quota | Running up the paid Claude bill, or exhausting the free Gemini and Pinecone quotas, is a cost and a denial of service |
 | Audit log | Needed to investigate misuse; must not be changed |
 
 ## Actors
@@ -197,7 +197,7 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 ## Residual risks
 
 - Prompt-injection detection is probabilistic; the code-level role checks and data filters are what keep a missed injection from leaking data.
-- Free-tier LLM providers may keep submitted data; only fictional data is used ([ASSUMPTIONS.md](../ASSUMPTIONS.md), M3).
+- Gemini's free tier may keep submitted data; only fictional data is used ([ASSUMPTIONS.md](../ASSUMPTIONS.md), M3).
 - Localhost runs over HTTP; production needs TLS and a secrets manager (S1, S2).
 - Alerting is not in scope (O1).
 - `/metrics`, `/docs` and the health endpoints need no login. They are reachable only from the local machine, and they hold request counts and timings, not user data. A real deployment would expose `/metrics` only on the internal network.

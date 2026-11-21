@@ -1,14 +1,18 @@
 """Calls the real language models. Run with `make test-live`.
 
-Uses GEMINI_API_KEY and OPENROUTER_API_KEY from .env and a few calls of the free
-quota. Each provider is checked on its own, so a wrong or retired model
+Uses ANTHROPIC_API_KEY and GEMINI_API_KEY from .env. Claude is paid per
+token, but the whole run costs well under one US cent with
+claude-haiku-5-5. Each provider is checked on its own, so a wrong or retired model
 name in the settings shows up here, not in front of a user. The full
 question test also needs `make ingest`.
 """
 
-import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
+from datetime import date
 
+import pytest
+from langchain_core.messages import HumanMessage
+
+from agents.context import prompt
 from agents.llm import ChatProvider, LLMGateway, build_gateway
 from agents.nodes.supervisor import SupervisorDecision
 from agents.service import open_agent_service
@@ -19,10 +23,15 @@ from security.roles import Role
 
 pytestmark = pytest.mark.live
 
-QUESTION = [
-    SystemMessage("Classify the request."),
-    HumanMessage("<question>Summarize payment-failure outages over the last year</question>"),
-]
+# The real supervisor prompt, so the model sees the same intent definitions
+# as in the app.
+QUESTION = prompt(
+    "supervisor",
+    "Summarize payment-failure outages over the last year",
+    [],
+    today=date.today(),
+    history=6,
+)
 
 
 def _providers() -> list[ChatProvider]:

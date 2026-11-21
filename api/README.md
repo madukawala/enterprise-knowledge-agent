@@ -105,7 +105,7 @@ return StreamingResponse(event_stream(events, ...), media_type="text/event-strea
 - sends a `: keep-alive` comment when nothing has come for `CHAT_KEEPALIVE_SECONDS` (default 15), so proxies keep a quiet connection open;
 - stops the run with an `error` event (`timeout`) after `CHAT_TIMEOUT_SECONDS` (default 120);
 - turns any unexpected failure into an `error` event with a fixed message, and logs the details with the request ID;
-- **cancels the run task when the client disconnects.** The cancellation reaches the model or search call in progress, and no backup model is tried, so the free quota is not spent on an answer nobody reads.
+- **cancels the run task when the client disconnects.** The cancellation reaches the model or search call in progress, and no backup model is tried, so no tokens are spent on an answer nobody reads.
 
 ## Who is asking
 

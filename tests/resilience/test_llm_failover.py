@@ -37,7 +37,7 @@ class StatusError(Exception):
 
 
 def _breaker(clock: Clock) -> CircuitBreaker:
-    return CircuitBreaker("gemini", failures=3, window_seconds=60, open_seconds=30, clock=clock)
+    return CircuitBreaker("anthropic", failures=3, window_seconds=60, open_seconds=30, clock=clock)
 
 
 def test_it_opens_after_enough_failures_inside_the_window() -> None:
@@ -124,12 +124,12 @@ def test_rate_limit_errors_are_recognised(error: Exception, expected: bool) -> N
 # ---------------------------------------------------------------
 
 
-def _gateway(gemini: ScriptedChatModel, openrouter: ScriptedChatModel, clock: Clock) -> LLMGateway:
+def _gateway(claude: ScriptedChatModel, gemini: ScriptedChatModel, clock: Clock) -> LLMGateway:
     metrics = AgentMetrics()
     gateway = LLMGateway(
         [
+            ChatProvider("anthropic", "anthropic-test", claude),
             ChatProvider("gemini", "gemini-test", gemini),
-            ChatProvider("openrouter", "openrouter-test", openrouter),
         ],
         timeout_seconds=1,
         metrics=metrics,
@@ -145,7 +145,7 @@ def _gateway(gemini: ScriptedChatModel, openrouter: ScriptedChatModel, clock: Cl
                 provider=provider
             ).set({"closed": 0, "half_open": 1, "open": 2}[state.value]),
         )
-        for name in ("gemini", "openrouter")
+        for name in ("anthropic", "gemini")
     }
     return gateway
 
@@ -155,53 +155,53 @@ QUESTION = [HumanMessage("pool?")]
 
 async def test_a_failing_provider_is_skipped_once_its_breaker_opens() -> None:
     clock = Clock()
-    gemini = ScriptedChatModel(texts=[RuntimeError("down"), RuntimeError("down"), "never"])
-    openrouter = ScriptedChatModel(texts=["backup 1", "backup 2", "backup 3"])
-    gateway = _gateway(gemini, openrouter, clock)
+    claude = ScriptedChatModel(texts=[RuntimeError("down"), RuntimeError("down"), "never"])
+    gemini = ScriptedChatModel(texts=["backup 1", "backup 2", "backup 3"])
+    gateway = _gateway(claude, gemini, clock)
 
     for n in (1, 2, 3):
         text, call = await gateway.text(QUESTION, purpose="answer")
         assert text == f"backup {n}"
         assert call.fallback
 
-    assert len(gemini.calls) == 2  # the third question did not wait for Gemini
-    assert gateway.breakers["gemini"].state is BreakerState.OPEN
-    gauge = gateway.metrics.llm_breaker_state.labels(provider="gemini")  # type: ignore[union-attr]
+    assert len(claude.calls) == 2  # the third question did not wait for Claude
+    assert gateway.breakers["anthropic"].state is BreakerState.OPEN
+    gauge = gateway.metrics.llm_breaker_state.labels(provider="anthropic")  # type: ignore[union-attr]
     assert gauge._value.get() == 2
 
 
 async def test_a_rate_limit_reply_skips_the_provider_at_once() -> None:
     clock = Clock()
-    gemini = ScriptedChatModel(texts=[RateLimitError(), "never"])
-    openrouter = ScriptedChatModel(texts=["backup 1", "backup 2"])
-    gateway = _gateway(gemini, openrouter, clock)
+    claude = ScriptedChatModel(texts=[RateLimitError(), "never"])
+    gemini = ScriptedChatModel(texts=["backup 1", "backup 2"])
+    gateway = _gateway(claude, gemini, clock)
 
     await gateway.text(QUESTION, purpose="answer")
     await gateway.text(QUESTION, purpose="answer")
 
-    assert len(gemini.calls) == 1
+    assert len(claude.calls) == 1
 
 
 async def test_the_provider_is_used_again_after_a_good_probe() -> None:
     clock = Clock()
-    gemini = ScriptedChatModel(texts=[RateLimitError(), "gemini is back", "gemini again"])
-    openrouter = ScriptedChatModel(texts=["backup"])
-    gateway = _gateway(gemini, openrouter, clock)
+    claude = ScriptedChatModel(texts=[RateLimitError(), "claude is back", "claude again"])
+    gemini = ScriptedChatModel(texts=["backup"])
+    gateway = _gateway(claude, gemini, clock)
     await gateway.text(QUESTION, purpose="answer")
 
     clock.now += 31
     text, call = await gateway.text(QUESTION, purpose="answer")
-    assert (text, call.provider, call.fallback) == ("gemini is back", "gemini", False)
+    assert (text, call.provider, call.fallback) == ("claude is back", "anthropic", False)
     text, _ = await gateway.text(QUESTION, purpose="answer")
-    assert text == "gemini again"
-    assert gateway.breakers["gemini"].state is BreakerState.CLOSED
+    assert text == "claude again"
+    assert gateway.breakers["anthropic"].state is BreakerState.CLOSED
 
 
 async def test_when_every_breaker_is_open_the_answer_is_immediate() -> None:
     clock = Clock()
+    claude = ScriptedChatModel(texts=[RateLimitError()])
     gemini = ScriptedChatModel(texts=[RateLimitError()])
-    openrouter = ScriptedChatModel(texts=[RateLimitError()])
-    gateway = _gateway(gemini, openrouter, clock)
+    gateway = _gateway(claude, gemini, clock)
     with pytest.raises(LLMUnavailableError):
         await gateway.text(QUESTION, purpose="answer")
 
@@ -209,19 +209,19 @@ async def test_when_every_breaker_is_open_the_answer_is_immediate() -> None:
     with pytest.raises(LLMUnavailableError):
         await gateway.text(QUESTION, purpose="answer")
     assert time.perf_counter() - started < 0.05
-    assert len(gemini.calls) == len(openrouter.calls) == 1
+    assert len(claude.calls) == len(gemini.calls) == 1
 
 
 async def test_a_bad_answer_moves_on_but_does_not_trip_the_breaker() -> None:
     clock = Clock()
-    gemini = ScriptedChatModel(texts=["", "", "", "fine"])
-    openrouter = ScriptedChatModel(texts=["backup"] * 3)
-    gateway = _gateway(gemini, openrouter, clock)
+    claude = ScriptedChatModel(texts=["", "", "", "fine"])
+    gemini = ScriptedChatModel(texts=["backup"] * 3)
+    gateway = _gateway(claude, gemini, clock)
 
     for _ in range(3):
         _, call = await gateway.text(QUESTION, purpose="answer")
-        assert call.provider == "openrouter"
+        assert call.provider == "gemini"
     _, call = await gateway.text(QUESTION, purpose="answer")
 
-    assert call.provider == "gemini"
-    assert gateway.breakers["gemini"].state is BreakerState.CLOSED
+    assert call.provider == "anthropic"
+    assert gateway.breakers["anthropic"].state is BreakerState.CLOSED

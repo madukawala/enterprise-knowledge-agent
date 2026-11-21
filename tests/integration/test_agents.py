@@ -26,8 +26,8 @@ from tests.helpers.search import DIMENSION, index_fixture_documents
 
 def _settings(tmp_path: Path, **overrides: object) -> Settings:
     values: dict[str, object] = {
-        "gemini_api_key": SecretStr("test-gemini-key"),
-        "gemini_model": "gemini-test",
+        "anthropic_api_key": SecretStr("test-anthropic-key"),
+        "claude_model": "anthropic-test",
         "pinecone_api_key": SecretStr("pcsk_test-key"),
         "index_artifacts_dir": tmp_path / "index",
         "embedding_dimension": DIMENSION,
@@ -48,7 +48,7 @@ def _scripted(*texts: str) -> ScriptedChatModel:
 
 @pytest.fixture
 def scripted_model(monkeypatch: pytest.MonkeyPatch) -> ScriptedChatModel:
-    """Replace the real Gemini/OpenRouter gateway with a scripted model."""
+    """Replace the real Claude/Gemini gateway with a scripted model."""
     model = _scripted("The mTLS certificate had expired [1].")
 
     def fake_build(settings: Settings, *, metrics: object = None) -> LLMGateway:
@@ -90,8 +90,8 @@ async def test_without_the_index_the_agents_still_run_and_say_search_is_unavaila
 
 
 async def test_without_a_model_key_setup_fails_with_a_clear_message(tmp_path: Path) -> None:
-    with pytest.raises(LLMSetupError, match="GEMINI_API_KEY"):
-        async with open_agent_service(_settings(tmp_path, gemini_api_key=None)):
+    with pytest.raises(LLMSetupError, match="ANTHROPIC_API_KEY"):
+        async with open_agent_service(_settings(tmp_path, anthropic_api_key=None)):
             pass
 
 
@@ -132,7 +132,7 @@ def test_the_cli_prints_the_answer_and_how_the_run_went(
     assert "Renew it [1]." in output
     assert "**How I got this answer**" in output
     assert "nodes: input_guard -> supervisor -> retrieval" in output
-    assert "gemini/gemini-test (3 calls, 360 tokens)" in output
+    assert "anthropic/anthropic-test (3 calls, 360 tokens)" in output
 
 
 def test_the_cli_chat_keeps_one_conversation(
@@ -164,9 +164,9 @@ def test_the_cli_chat_keeps_one_conversation(
 def test_the_cli_reports_a_missing_model_key(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    code = cli.main(["hello"], settings=_settings(tmp_path, gemini_api_key=None))
+    code = cli.main(["hello"], settings=_settings(tmp_path, anthropic_api_key=None))
     assert code == 1
-    assert "GEMINI_API_KEY" in capsys.readouterr().err
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
 
 
 def test_the_cli_needs_a_question_or_chat(tmp_path: Path) -> None:

@@ -29,12 +29,15 @@ dependencies = [
     # The agent graph (ADR-0006) and the chat model interface it uses
     "langgraph>=1.2.24",
     "langchain-core>=1.8.4",
-    # Language models: Gemini first, OpenRouter as the fallback (ADR-0002).
-    # OpenRouter speaks the OpenAI API, so the OpenAI client is used for it.
+    # Language models: Claude first, Gemini as the backup (ADR-0017).
+    "langchain-anthropic>=1.7.12",
     "langchain-google-genai>=4.5.2",
+    # The Anthropic client reads compressed replies through brotlicffi.
+    # Older versions fail on every non-streamed call with a misleading
+    # "connection error", so the fixed version is pinned here.
+    "brotlicffi>=1.2",
     # Traces of every agent run, model call and search
     "langsmith>=0.15.1",
-    "langchain-openai>=1.8.5",
     # Checks the Keycloak login tokens (signature, issuer, audience, expiry).
     # The tests use it too, to sign their own tokens.
     "pyjwt[crypto]>=2.10",

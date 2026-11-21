@@ -156,7 +156,7 @@ eval-retrieval: ## Hit rate and MRR for several alpha values; saves docs/evals/r
 # ---------------------------------------------------------------
 
 # Example: make ask Q="Why did card payments fail in March?" ROLE=analyst
-# Needs GEMINI_API_KEY or OPENROUTER_API_KEY, and the index from `make ingest`.
+# Needs ANTHROPIC_API_KEY or GEMINI_API_KEY, and the index from `make ingest`.
 # Q and ROLE are passed as environment variables, as in `make search`.
 ask: export Q := $(Q)
 ask: export ROLE := $(ROLE)
