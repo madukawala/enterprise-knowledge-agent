@@ -109,6 +109,52 @@ def test_traces_are_masked_before_they_leave_the_machine() -> None:
     assert masked["metadata"] == {"user": "u_1234", "tries": 2}
 
 
+def test_typed_objects_in_the_agent_state_are_masked_in_traces() -> None:
+    """Each agent step's trace carries the graph state, full of typed objects.
+
+    A tool result, a chat message or a document passage must be masked the
+    same way as a plain string, while the rest of the object stays readable.
+    """
+    from dataclasses import dataclass
+
+    from langchain_core.messages import HumanMessage
+
+    from agents.state import ToolRecord
+
+    @dataclass(frozen=True)
+    class Passage:
+        doc_id: str
+        text: str
+
+    state = {
+        "messages": [HumanMessage("Call me on +44 20 7946 0958")],
+        "tool_records": [
+            ToolRecord(
+                tool="service_owner",
+                arguments={"service": "PayHub"},
+                ok=True,
+                items=1,
+                text='{"name": "Grace Okafor", "email": "grace.okafor@helix.example"}',
+            )
+        ],
+        "passages": (Passage(doc_id="RB-010", text="sftp payroll-svc@sftp.hr.internal"),),
+    }
+
+    masked = mask_for_trace(state)
+
+    assert masked["messages"][0]["content"] == "Call me on [PHONE]"
+    assert masked["messages"][0]["type"] == "human"
+    record = masked["tool_records"][0]
+    assert record["text"] == '{"name": "Grace Okafor", "email": "[EMAIL]"}'
+    assert (record["tool"], record["arguments"], record["items"]) == (
+        "service_owner",
+        {"service": "PayHub"},
+        1,
+    )
+    assert masked["passages"][0] == {"doc_id": "RB-010", "text": "sftp [EMAIL]"}
+    assert "@" not in json.dumps(masked)
+
+
 # ---------------------------------------------------------------
 # Cleaning retrieved text
 # ---------------------------------------------------------------

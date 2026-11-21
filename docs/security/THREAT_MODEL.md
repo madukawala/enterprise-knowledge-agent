@@ -155,7 +155,7 @@ Layered controls are drawn in [06-security-layers](../architecture/06-security-l
 | A bug in one agent crashes the run or hides an error | Every node runs through one wrapper: traceback logged, error counted, safe fallback used; the input guard fails closed; the validator never shows an unchecked answer | `tests/graph/test_failure_containment.py` |
 | A tampered checkpoint makes the app build an unexpected object | Checkpoints are read back with an explicit list of allowed types | `tests/graph/test_conversation.py` |
 | Provider error messages leak prompt text into logs | Only the provider, outcome and error type are logged; the question is never logged | `tests/unit/test_llm_gateway.py`, `tests/security/test_agent_permissions.py` |
-| Traces sent to LangSmith contain personal data | Tracing is off unless switched on with a key; the key goes straight to the client, so only agent runs are traced; inputs, outputs and metadata are masked by the client before sending | Tracing tests in `tests/integration/test_agents.py`; residual risk below |
+| Traces sent to LangSmith contain personal data | Tracing is off unless switched on with a key; the key goes straight to the client, so only agent runs are traced; inputs, outputs and metadata are masked by the client before sending, including the typed objects in each agent step's state (chat messages, tool results, retrieved chunks) | Tracing tests in `tests/integration/test_agents.py`; trace masking, typed objects included, in `tests/unit/test_guardrails.py`; residual risk below |
 
 ## Chat stream (`POST /chat`)
 

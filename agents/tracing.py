@@ -26,11 +26,13 @@ addresses, card numbers, phone numbers and secrets replaced by their kind.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import fields, is_dataclass
 from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tracers.langchain import LangChainTracer
 from langsmith import Client
+from pydantic import BaseModel
 
 from core.config import Settings
 from core.logging import get_logger
@@ -39,25 +41,60 @@ from core.pii import mask_text
 log = get_logger(__name__)
 
 
+def project_id(client: Client, project: str) -> str | None:
+    """The ID of a LangSmith project, found by its name.
+
+    LangSmith wants it with every piece of feedback, to know which project
+    the traced run is in (the SDK calls it `session_id`). Without it the
+    feedback is still saved today, but the SDK warns that this will stop
+    working. Returns None if the project cannot be read, so the caller can
+    still send the feedback the old way.
+    """
+    try:
+        return str(client.read_project(project_name=project).id)
+    except Exception as error:  # tracing must never break the app
+        log.warning("langsmith_project_lookup_failed", error_type=type(error).__name__)
+        return None
+
+
 def mask_for_trace(data: Any) -> Any:
     """Mask personal data and secrets in a run's inputs, outputs or metadata.
 
-    Walks dicts and lists, and masks every string, including the text of
-    chat messages, which LangSmith receives as nested dicts.
+    Walks dicts and lists, and masks every string. Model calls reach
+    LangSmith as nested dicts, but each agent step carries the graph state,
+    which holds typed objects: chat messages, tool results, retrieved
+    chunks, the answer. Those are turned into plain data first and then
+    masked, so a tool result or a document passage is masked like the
+    question is. LangSmith would turn them into the same plain data when it
+    sends the trace, so the trace looks the same, only masked.
     """
     if isinstance(data, str):
         return mask_text(data)
     if isinstance(data, Mapping):
         return {key: mask_for_trace(value) for key, value in data.items()}
-    if isinstance(data, list | tuple):
+    if isinstance(data, list | tuple | set | frozenset):
         return [mask_for_trace(item) for item in data]
+    if isinstance(data, BaseModel):
+        return mask_for_trace(_model_data(data))
+    if is_dataclass(data) and not isinstance(data, type):
+        return mask_for_trace({f.name: getattr(data, f.name) for f in fields(data)})
     return data
+
+
+def _model_data(model: BaseModel) -> Any:
+    """A pydantic model as plain data, or as its fields if that fails."""
+    try:
+        return model.model_dump(mode="json")
+    except Exception:  # a field JSON cannot hold: walk the fields instead
+        return {name: getattr(model, name) for name in type(model).model_fields}
 
 
 class Tracing:
     def __init__(self, settings: Settings) -> None:
         self.project = settings.langsmith_project
         self._client: Client | None = None
+        # Looked up on the first feedback and kept: the project does not move.
+        self._project_id: str | None = None
         if settings.langsmith_tracing and settings.langsmith_api_key is not None:
             self._client = Client(
                 api_key=settings.langsmith_api_key.get_secret_value(),
@@ -87,12 +124,15 @@ class Tracing:
         """
         if self._client is None:
             return False
+        if self._project_id is None:
+            self._project_id = project_id(self._client, self.project)
         try:
             self._client.create_feedback(
                 run_id=run_id,
                 key="user_score",
                 score=score,
                 comment=mask_text(comment) if comment else None,
+                session_id=self._project_id,
             )
         except Exception as error:  # tracing must never break the app
             log.warning("langsmith_feedback_failed", error_type=type(error).__name__)

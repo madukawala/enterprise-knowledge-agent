@@ -4,6 +4,7 @@ and the generated graph diagram. Models and Pinecone are in-memory fakes."""
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langsmith import Client
@@ -222,6 +223,53 @@ async def test_traced_runs_carry_the_role_and_request_labels(
     assert metadata["role"] == "viewer"
     assert {"helix-agent", "role:viewer"} <= set(graph_run["tags"])  # type: ignore[arg-type]
     tracing.flush()
+
+
+def _feedback_recorder(
+    monkeypatch: pytest.MonkeyPatch, *, project_found: bool = True
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Record feedback and project lookups instead of calling LangSmith."""
+    sent: list[dict[str, object]] = []
+    lookups: list[str] = []
+
+    def read_project(self: Client, *, project_name: str) -> object:
+        lookups.append(project_name)
+        if not project_found:
+            raise RuntimeError("not found")
+        return SimpleNamespace(id="project-1")
+
+    monkeypatch.setattr(Client, "read_project", read_project)
+    monkeypatch.setattr(Client, "create_feedback", lambda self, **feedback: sent.append(feedback))
+    return sent, lookups
+
+
+def test_feedback_names_the_project_of_the_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LangSmith wants the project with each feedback; it is looked up once."""
+    sent, lookups = _feedback_recorder(monkeypatch)
+    settings = _settings(
+        tmp_path, langsmith_tracing=True, langsmith_api_key=SecretStr("lsv2_test-key")
+    )
+    tracing = Tracing(settings)
+
+    assert tracing.send_feedback("run-1", score=1.0, comment=None)
+    assert tracing.send_feedback("run-2", score=0.0, comment=None)
+
+    assert [f["session_id"] for f in sent] == ["project-1", "project-1"]
+    assert lookups == ["helix-knowledge-agent"]
+
+
+def test_feedback_is_still_sent_when_the_project_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent, _ = _feedback_recorder(monkeypatch, project_found=False)
+    settings = _settings(
+        tmp_path, langsmith_tracing=True, langsmith_api_key=SecretStr("lsv2_test-key")
+    )
+
+    assert Tracing(settings).send_feedback("run-1", score=1.0, comment=None)
+    assert sent[0]["session_id"] is None
 
 
 def test_run_config_labels_every_trace() -> None:

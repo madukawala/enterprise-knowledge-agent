@@ -14,7 +14,7 @@ Prompt injection is text that tries to make the language model ignore its instru
 | 6 | **Code decides access, not the model** | rag/filters.py, security/policies.py, agents/nodes/supervisor.py | Every search carries the access-level filter from the role; the model picks an intent, code picks the agents and checks the role. A fooled model still cannot read above the user's level or reach a tool the role may not use |
 | 7 | **Answer checks** | agents/nodes/validator.py, security/guardrails/output.py | Citations to sources that were never retrieved, repeated internal instructions, document labels above the role, investment advice: the answer is written again once, then replaced by the source list |
 | 8 | **Answer fixes** | security/guardrails/output.py, core/pii.py | Images removed, outside links made plain text, personal data and secrets masked, in the answer and in the streamed preview |
-| 9 | **Logs and traces** | core/logging.py, agents/tracing.py | The question is never logged; every log value and every LangSmith trace is passed through the masker |
+| 9 | **Logs and traces** | core/logging.py, agents/tracing.py | The question is never logged; every log value and every LangSmith trace is passed through the masker, including the tool results and retrieved chunks in each agent step's state |
 
 Layers 1 and 6 are the ones that keep data safe. The scans (3, 5) and checks (7) reduce how often an attack even gets to try.
 
