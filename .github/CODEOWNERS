@@ -1,0 +1,26 @@
+# Code owners for the Helix Knowledge Assistant.
+#
+# GitHub asks the owners below to review every pull request that changes
+# the matching files. With "Require review from Code Owners" turned on in
+# the ruleset for `main`, a pull request cannot be merged until an owner
+# has approved it.
+#
+# The last matching line wins, so the general rule comes first and the
+# more specific ones after it.
+
+# Everything in the repository
+*                               @madukawala
+
+# Areas where a change can weaken security or access control.
+# Listed on their own so a new owner can be added here later without
+# giving them the whole repository.
+/security/                      @madukawala
+/core/pii.py                    @madukawala
+/agents/tracing.py              @madukawala
+/sandbox/                       @madukawala
+/infra/                         @madukawala
+/compose.yaml                   @madukawala
+/Dockerfile                     @madukawala
+/.github/                       @madukawala
+/pyproject.toml                 @madukawala
+/uv.lock                        @madukawala
