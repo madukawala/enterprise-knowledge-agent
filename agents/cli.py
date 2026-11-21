@@ -62,12 +62,12 @@ async def _run(args: argparse.Namespace, settings: Settings, factory: ServiceFac
     try:
         async with factory(settings) as agents:
             if not args.chat:
-                print(render(await agents.ask(args.question, role=args.role)))
+                print(render(await agents.ask(args.question, role=args.role, approve=True)))
                 return 0
             thread_id = None
             print(f"Asking as {args.role.value}. An empty line ends the conversation.")
             while question := (await asyncio.to_thread(input, "\nYou: ")).strip():
-                run = await agents.ask(question, role=args.role, thread_id=thread_id)
+                run = await agents.ask(question, role=args.role, thread_id=thread_id, approve=True)
                 thread_id = run.thread_id
                 print("\n" + render(run))
             return 0

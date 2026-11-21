@@ -27,10 +27,12 @@ Together with [ASSUMPTIONS.md](../ASSUMPTIONS.md), these records explain the ass
 | [0012](0012-architecture-diagrams.md) | draw.io for architecture pictures, Mermaid for flows, agent graph generated from code | Accepted |
 | [0013](0013-streaming-with-server-sent-events.md) | Answers and agent activity streamed with server-sent events, built from LangGraph's stream modes | Accepted |
 | [0014](0014-streamlit-chat-ui.md) | Streamlit chat UI as a thin client of the streaming API: own image, Stop cancels the run, state per browser tab | Accepted |
+| [0015](0015-rate-limiting.md) | Questions per minute as Redis token buckets per user and role, plus a daily token budget per user | Accepted |
+| [0016](0016-guardrails-rules-and-pattern-masking.md) | Prompt-injection rules and pattern-based personal data masking in code, instead of LLM Guard and Presidio | Accepted |
 
 ## Adding a record
 
-1. Copy [template.md](template.md) to a new file with the next number, for example `0015-short-title.md`.
+1. Copy [template.md](template.md) to a new file with the next number, for example `0017-short-title.md`.
 2. Fill in each section in plain language.
 3. Add a row to the table above.
 

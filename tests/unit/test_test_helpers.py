@@ -27,7 +27,7 @@ def test_tokens_carry_the_role_and_verify_with_the_jwks(
 ) -> None:
     claims = _decode(token_factory, token_factory.token(role))
 
-    assert claims["realm_access"] == {"roles": [role.value]}
+    assert claims["realm_access"] == {"roles": ["default-roles-helix", role.value]}
     assert claims["sub"]
 
 
@@ -35,11 +35,11 @@ def test_role_fixtures_give_one_token_per_role(
     token_factory: TokenFactory, viewer_token: str, analyst_token: str, admin_token: str
 ) -> None:
     roles = [
-        _decode(token_factory, token)["realm_access"]
+        _decode(token_factory, token)["realm_access"]["roles"][-1]  # type: ignore[index]
         for token in (viewer_token, analyst_token, admin_token)
     ]
 
-    assert roles == [{"roles": ["viewer"]}, {"roles": ["analyst"]}, {"roles": ["admin"]}]
+    assert roles == ["viewer", "analyst", "admin"]
 
 
 def test_expired_tokens_are_rejected(token_factory: TokenFactory) -> None:

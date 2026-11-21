@@ -117,3 +117,16 @@ http-client.private.env.json
 # credentials files are never committed.
 .streamlit/secrets.toml
 .streamlit/credentials.toml
+
+# ---------------------------------------------------------------
+# Login (Keycloak)
+# ---------------------------------------------------------------
+# Access tokens saved by hand while trying the API (for example the output
+# of `make token`). They are bearer credentials until they expire.
+*.jwt
+token.txt
+tokens.txt
+# Realm exports from the Keycloak admin console can hold user data and
+# client secrets. The shared realm is infra/keycloak/realm-helix.json.
+realm-export*.json
+infra/keycloak/*-export.json

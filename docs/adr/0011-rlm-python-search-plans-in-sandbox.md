@@ -15,6 +15,13 @@ The RLM requirement says the research agent should "generate Python-based search
 - Recursion limits: **depth 3, fan-out 5**, and a token budget per run. When a limit is hit, splitting stops and the agent works with what it has.
 - The same sandbox serves the Python analysis tool for Analysts and Admins.
 
+## Changes during implementation (`feature/python-sandbox`)
+
+- **Plan functions return search requests instead of calling the API.** `search()` and `fetch_section()` return dictionaries that describe the work. The sandbox hands the list back, and the API runs each search itself with the user's role filter. The sandbox therefore needs no network at all (not even to the API), and there is no internal endpoint to protect.
+- **Two modes share one validator.** Plans use the strict rules above; the Python analysis tool allows ordinary Python with a short list of standard modules. Both refuse names and attributes starting with `_`, `str.format`, and the usual escape functions.
+- **Allowed modules are handed out as stand-ins** that hold their functions and values but no other modules, because `statistics.sys`, `fractions.sys` and `json.codecs` lead to `sys.modules` and from there to `os`.
+- **The image is built from `sandbox/` alone**, with its own empty `requirements.txt` (standard library only), and import-linter checks that the sandbox and the app never import each other.
+
 ## Consequences
 
 - **Positive:** the assignment's "Python-based search plans" are real, visible in traces, and safe.

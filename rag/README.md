@@ -64,7 +64,7 @@ Search runs while a user waits, so it degrades instead of failing whenever it ca
 | A record has broken metadata (e.g. from an older ingestion) | That record is skipped and counted |
 | The search is cancelled (the user left) | The cancellation reaches every running query; nothing is left running |
 
-Every Pinecone call is limited to `RETRIEVAL_TIMEOUT_SECONDS` (default 8). The client also retries less than its default (2 retries, at most 2 seconds apart), because a person is waiting. The circuit breaker and the "reduced mode" banner come with `feature/resilience`.
+Every Pinecone call is limited to `RETRIEVAL_TIMEOUT_SECONDS` (default 8). The client also retries less than its default (2 retries, at most 2 seconds apart), because a person is waiting. When search fails, the supervisor retries once, and then the answer says document search is unavailable ([07-failure-handling.md](../docs/architecture/07-failure-handling.md)).
 
 ## Access levels
 
@@ -102,4 +102,4 @@ The change is recorded in [ADR-0004](../docs/adr/0004-embeddings-and-bm25.md).
 ## Not in this package yet
 
 - **Choosing collections and rewriting the question** need the language model, so the retrieval agent does them ([agents/nodes/retrieval.py](../agents/nodes/retrieval.py)). Called directly, as `make search` does, the default is all six collections.
-- **Cleaning retrieved text** (hidden instructions, HTML, zero-width characters) comes with `feature/guardrails`.
+- **Cleaning retrieved text** (hidden instructions, HTML, zero-width characters) happens in the retrieval agent, after the search returns (agents/nodes/retrieval.py and security/guardrails/text.py).

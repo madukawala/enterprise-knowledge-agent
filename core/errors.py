@@ -19,9 +19,17 @@ class AppError(Exception):
     code: ClassVar[str] = "internal_error"
     default_message: ClassVar[str] = "Something went wrong. Please try again later."
 
-    def __init__(self, message: str | None = None, *, details: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ):
         self.message = message or self.default_message
         self.details = details or {}
+        # Extra response headers, for example Retry-After on a 429.
+        self.headers = headers or {}
         super().__init__(self.message)
 
 
@@ -29,6 +37,14 @@ class AuthError(AppError):
     status_code = 401
     code = "unauthorized"
     default_message = "You need to sign in again."
+
+
+class AuthUnavailableError(AppError):
+    """Keycloak's signing keys could not be fetched, so no token can be checked."""
+
+    status_code = 503
+    code = "auth_unavailable"
+    default_message = "Sign-in is unavailable right now. Please try again shortly."
 
 
 class PermissionDeniedError(AppError):
@@ -60,11 +76,28 @@ class RateLimitError(AppError):
     code = "rate_limited"
     default_message = "Too many requests. Please wait a moment and try again."
 
+    def __init__(
+        self, message: str | None = None, *, retry_after: int = 1, limit: str = "requests"
+    ) -> None:
+        # Whole seconds, at least 1, as the Retry-After header requires.
+        self.retry_after = max(1, retry_after)
+        super().__init__(
+            message,
+            details={"retry_after_seconds": self.retry_after, "limit": limit},
+            headers={"Retry-After": str(self.retry_after)},
+        )
+
 
 class ToolError(AppError):
     status_code = 502
     code = "tool_error"
     default_message = "A tool needed for this answer did not respond correctly."
+
+
+class ServiceUnavailableError(AppError):
+    status_code = 503
+    code = "service_unavailable"
+    default_message = "This service is unavailable right now. Please try again shortly."
 
 
 class RetrievalError(AppError):

@@ -15,6 +15,7 @@ from api.main import create_app
 from core.config import Settings
 from tests.helpers.agents import FakeSearcher, agent_service, decision, search_plan
 from tests.helpers.llm import ScriptedChatModel
+from tests.helpers.tokens import TOKENS
 
 
 def answering_model(*texts: Any, **options: Any) -> ScriptedChatModel:
@@ -36,7 +37,7 @@ def chat_app(
     searcher: FakeSearcher | None = None,
 ) -> FastAPI:
     """The real app, with the agents it would open on startup replaced by scripted ones."""
-    app = create_app(settings)
+    app = create_app(settings, signing_keys=TOKENS.signing_keys)
     app.state.agents = agent_service(
         model, searcher or FakeSearcher(), checkpointer=memory_checkpointer()
     )

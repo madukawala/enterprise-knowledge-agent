@@ -41,8 +41,12 @@ class AgentName(StrEnum):
     INPUT_GUARD = "input_guard"
     SUPERVISOR = "supervisor"
     RETRIEVAL = "retrieval"
+    RESEARCH = "research"
     RESPONSE = "response"
     VALIDATOR = "validator"
+    MEMORY = "memory"
+    TOOLS = "tools"
+    APPROVAL = "approval"
 
 
 class Intent(StrEnum):
@@ -156,6 +160,52 @@ class SearchPlan(BaseModel):
     )
 
 
+class ToolRecord(BaseModel):
+    """One enterprise data tool call (the MCP server)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tool: str
+    arguments: dict[str, Any]
+    ok: bool
+    items: int = 0
+    error: str | None = None
+    duration_ms: int = 0
+    # The result as compact JSON, for the answer prompt (empty when it failed).
+    text: str = ""
+
+
+class BatchReport(BaseModel):
+    """What one research sub-agent did with its batch."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    depth: int
+    hits: int
+    findings: int
+    # Set when the batch failed; the other batches still count.
+    error: str | None = None
+    # True when it had too much material and split into smaller batches.
+    split: bool = False
+
+
+class ResearchSummary(BaseModel):
+    """What the research agent did, for the activity panel and traces."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # "sandbox": the model's Python plan, run in the sandbox.
+    # "fallback": the fixed plan (last twelve months by quarter).
+    plan_source: str
+    plan_code: str | None = None
+    batches: tuple[BatchReport, ...]
+    max_depth: int
+    sources: int
+    tokens_used: int
+    stopped_by_budget: bool = False
+
+
 class SearchSummary(BaseModel):
     """What the retrieval agent did, for the answer, the activity panel and traces."""
 
@@ -246,14 +296,25 @@ class Validation(BaseModel):
 # ---------------------------------------------------------------
 
 
+class Fresh(list[Any]):
+    """A list update that replaces the collected list instead of adding to it.
+
+    The input guard uses it to clear the previous question's steps and add
+    its own in one update.
+    """
+
+
 def reset_or_extend(current: list[Any] | None, update: list[Any] | None) -> list[Any]:
     """Append to a list, or clear it when the update is `None`.
 
     Appending (rather than replacing) means nodes that run side by side,
     such as research sub-agents later, never overwrite each other's entries.
+    A `Fresh` list replaces what was collected.
     """
     if update is None:
         return []
+    if isinstance(update, Fresh):
+        return list(update)
     return [*(current or []), *update]
 
 
@@ -285,7 +346,15 @@ class AgentState(TypedDict, total=False):
     # Set by the caller for every question, from the validated login token.
     # Never read from the conversation or from model output.
     role: Role
+    # The user's pseudonym from the login token. Keys their long-term memory.
+    user: str | None
     request_id: str
+    # A running summary of the older turns of a long thread, and how many
+    # messages it covers (ADR-0008). Kept across questions.
+    summary: str | None
+    summary_covers: int
+    # What the memory writer saved for this question (the `memory` event).
+    memory_saved: list[str]
 
     # Set by the input guard.
     question: str
@@ -299,6 +368,13 @@ class AgentState(TypedDict, total=False):
     search_plan: SearchPlan | None
     search: SearchSummary | None
     hits: list[SearchHit]
+    research: ResearchSummary | None
+    # Findings from the research sub-agents, for the answer (as data).
+    findings: list[str]
+    # Enterprise data tool calls of this question, and their results.
+    tool_results: list[ToolRecord]
+    # The human approval step: "approved" or "rejected" (None: not asked).
+    approval: str | None
     relax_filters: bool
     retrieval_attempts: int
 
@@ -328,6 +404,9 @@ STATE_TYPES: tuple[type, ...] = (
     Plan,
     SearchPlan,
     SearchSummary,
+    BatchReport,
+    ResearchSummary,
+    ToolRecord,
     AnswerKind,
     NumberedCitation,
     Answer,

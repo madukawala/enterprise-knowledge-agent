@@ -11,9 +11,11 @@ from fastapi import FastAPI
 from agents.events import AgentEvent, AgentStateEvent
 from core.config import Environment, LogFormat, Settings
 from core.logging import configure_logging
+from security.roles import Role
 from tests.helpers.agents import FakeSearcher, gateway, hit, result_with
 from tests.helpers.chat import answering_model, chat_app
 from tests.helpers.sse import post_stream
+from tests.helpers.tokens import TEST_USERS
 
 LONG_ANSWER = " ".join(["The pool was exhausted [1]."] * 20)
 
@@ -53,7 +55,7 @@ async def test_the_run_stops_when_the_client_disconnects() -> None:
     assert backup.calls == []
     assert app.state.chat_metrics.active._value.get() == 0
     # The thread is free again, so the user can ask again straight away.
-    app.state.threads.start("thread-left-early", owner="role:viewer")
+    app.state.threads.start("thread-left-early", owner=TEST_USERS[Role.VIEWER].user_id)
 
 
 async def test_a_run_over_the_time_limit_ends_with_a_timeout_event() -> None:

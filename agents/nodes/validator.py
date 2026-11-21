@@ -20,14 +20,21 @@ and the steps and limits collected during the run are added, which gives
 the "How I got this answer" section. The answer text is then added to the
 conversation, so follow-up questions can refer to it.
 
-Output guardrails (PII masking, restricted labels, system-prompt leakage,
-brand rules) are added here in `feature/guardrails`.
+Output guardrails (security/guardrails/output.py), on model-written answers:
+
+- rejected like any other failed check: the answer repeats the internal
+  instructions, shows a document label above the user's role, or gives
+  investment, tax or legal advice;
+- fixed on every answer that is shown: images removed, links to outside
+  sites made plain text, and personal data and secrets masked. The
+  activity panel says what was changed.
 """
 
 from collections.abc import Iterable
 
 from langchain_core.messages import AIMessage
 
+from agents.context import prompt_fingerprint
 from agents.nodes.base import AgentNode, StateUpdate
 from agents.nodes.response import fallback_answer
 from agents.state import (
@@ -40,20 +47,32 @@ from agents.state import (
     AnswerKind,
     Validation,
 )
-from core.logging import get_logger
+from core.logging import SECURITY_LOGGER, get_logger
+from security.guardrails import output
+from security.roles import Role
 
 log = get_logger(__name__)
+security_log = get_logger(SECURITY_LOGGER)
 
 MAX_ANSWER_CHARS = 6000
 # The first draft plus one rewrite.
 MAX_RESPONSE_ATTEMPTS = 2
 
 
-def check(answer: Answer, *, sources: int) -> list[str]:
+def guardrail_problems(answer: Answer, role: Role | None) -> list[output.Problem]:
+    """The output guardrails' problems with a model-written answer."""
+    if answer.kind not in MODEL_WRITTEN or role is None:
+        return []
+    return output.problems(answer.text, role=role, fingerprint=prompt_fingerprint())
+
+
+def check(
+    answer: Answer, *, sources: int, role: Role | None = None, tool_data: bool = False
+) -> list[str]:
     """The problems with a model-written answer. Empty means it passed."""
     if answer.kind not in MODEL_WRITTEN:
         return []
-    issues = []
+    issues = [problem.message for problem in guardrail_problems(answer, role)]
     text = answer.text.strip()
     if not text:
         issues.append("The answer is empty.")
@@ -70,7 +89,8 @@ def check(answer: Answer, *, sources: int) -> list[str]:
     if unknown:
         listed = ", ".join(f"[{number}]" for number in unknown)
         issues.append(f"It cites {listed}, but only sources [1] to [{sources}] were given.")
-    if not cited:
+    # Facts from the live enterprise tools need no source number.
+    if not cited and not tool_data:
         issues.append("It does not cite any source. Add the source number after each fact.")
     return issues
 
@@ -114,7 +134,18 @@ class Validator(AgentNode):
             # Should not happen; answer safely rather than show nothing.
             draft = fallback_answer(state.get("hits", []))
 
-        issues = check(draft, sources=len(state.get("hits", [])))
+        role = state.get("role")
+        for problem in guardrail_problems(draft, role):
+            self.context.metrics.guardrail_blocks.labels(
+                guard="output", category=problem.category
+            ).inc()
+            security_log.warning("answer_blocked", category=problem.category, attempt=attempt)
+        issues = check(
+            draft,
+            sources=len(state.get("hits", [])),
+            role=role,
+            tool_data=any(r.ok for r in state.get("tool_results", [])),
+        )
         validation = Validation(passed=not issues, issues=tuple(issues), attempt=attempt)
 
         if issues and attempt < MAX_RESPONSE_ATTEMPTS:
@@ -140,13 +171,20 @@ class Validator(AgentNode):
             self.context.metrics.validations.labels(result="passed").inc()
             step = self.step(_passed_summary(draft))
 
-        state_with_step: AgentState = {**state, "steps": [*state.get("steps", []), step]}
-        answer = finish(draft, state_with_step)
+        fixed = output.fix(draft.text)
+        steps = [step, *(self.step(note) for note in fixed.notes)]
+        for kind, count in fixed.masked.items():
+            self.context.metrics.pii_masked.labels(kind=kind).inc(count)
+        if fixed.text != draft.text:
+            draft = draft.model_copy(update={"text": fixed.text})
+
+        state_with_steps: AgentState = {**state, "steps": [*state.get("steps", []), *steps]}
+        answer = finish(draft, state_with_steps)
         return {
             "validation": validation,
             "next_agent": None,
             "answer": answer,
-            "steps": [step],
+            "steps": steps,
             "messages": [AIMessage(answer.text, name="assistant")],
         }
 

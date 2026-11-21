@@ -1,8 +1,9 @@
 """User roles and the document access levels each role may read.
 
-The role always comes from the validated login token, never from the request
-body or the conversation (ADR-0007). The full role matrix for routes and
-tools is added in `security/policies.py` with the auth branch.
+The role always comes from the validated login token (security/auth.py),
+never from the request body or the conversation (ADR-0007). What each role
+may do (routes, tools, admin actions) is in security/policies.py; this file
+only holds the document access levels, which the search needs as a set.
 """
 
 from collections.abc import Mapping

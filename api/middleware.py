@@ -7,6 +7,10 @@ For every HTTP request this middleware:
 - returns it in the `X-Request-ID` response header;
 - logs one line when the request finishes, with the status and duration.
 
+Once the login token has been checked (api/identity.py), the pseudonymised
+user and the role are bound to the same logging context, so the
+`request_finished` line and every line before it say who asked.
+
 It is plain ASGI middleware rather than Starlette's `BaseHTTPMiddleware`,
 so it does not buffer streaming responses (the chat endpoint streams with SSE).
 """
@@ -26,6 +30,10 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # Caller-supplied IDs are accepted only if they are short and plain, so they
 # cannot be used to inject text into headers or log lines.
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+# Logging fields that belong to one request and are cleared when it ends.
+# `user` and `role` are bound by api/identity.py after the token is checked.
+_REQUEST_LOG_FIELDS = ("request_id", "user", "role")
 
 logger = get_logger(__name__)
 
@@ -80,4 +88,4 @@ class RequestContextMiddleware:
                 status_code=status_code,
                 duration_ms=round((time.perf_counter() - started) * 1000, 2),
             )
-            structlog.contextvars.unbind_contextvars("request_id")
+            structlog.contextvars.unbind_contextvars(*_REQUEST_LOG_FIELDS)

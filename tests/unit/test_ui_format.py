@@ -100,10 +100,24 @@ def test_settings_are_read_from_the_environment() -> None:
     assert settings == UiSettings(api_url="http://api:8000", connect_timeout=2, read_timeout=90)
 
 
+def test_keycloak_settings_are_read_from_the_environment() -> None:
+    settings = UiSettings.from_env(
+        {
+            "KEYCLOAK_URL": "http://keycloak:8080/",
+            "KEYCLOAK_REALM": "other",
+            "KEYCLOAK_CLIENT_ID": "other-ui",
+        }
+    )
+    assert settings.keycloak_url == "http://keycloak:8080"
+    assert settings.keycloak_realm == "other"
+    assert settings.keycloak_client_id == "other-ui"
+
+
 @pytest.mark.parametrize(
     ("env", "message"),
     [
         ({"API_URL": "api:8000"}, "API_URL must start with http"),
+        ({"KEYCLOAK_URL": "keycloak:8080"}, "KEYCLOAK_URL must start with http"),
         ({"UI_READ_TIMEOUT": "soon"}, "UI_READ_TIMEOUT must be a number"),
         ({"UI_CONNECT_TIMEOUT": "0"}, "UI_CONNECT_TIMEOUT must be more than 0"),
     ],
@@ -111,3 +125,30 @@ def test_settings_are_read_from_the_environment() -> None:
 def test_bad_settings_are_refused_with_a_clear_message(env: dict[str, str], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         UiSettings.from_env(env)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [
+        (1, "1 second"),
+        (59, "59 seconds"),
+        (90, "2 minutes"),
+        (3600, "1 hour"),
+        (3720, "1 hour 2 minutes"),
+    ],
+)
+def test_waits_are_described_in_plain_words(seconds: int, text: str) -> None:
+    assert fmt.describe_wait(seconds) == text
+
+
+def test_tool_calls_are_described_for_the_panel() -> None:
+    ok = {
+        "tool": "service_owner",
+        "arguments": {"service": "PayHub"},
+        "ok": True,
+        "items": 1,
+        "duration_ms": 120,
+    }
+    failed = {"tool": "list_incidents", "arguments": {}, "ok": False, "error": "timeout"}
+    assert fmt.tool_line(ok) == "service_owner(service=PayHub): 1 found, 120 ms"
+    assert fmt.tool_line(failed) == "list_incidents(): failed (timeout)"

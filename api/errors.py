@@ -66,12 +66,17 @@ async def handle_app_error(request: Request, exc: Exception) -> JSONResponse:
     error = cast(AppError, exc)
     log = logger.error if error.status_code >= 500 else logger.info
     log("app_error", code=error.code, status_code=error.status_code, error=str(error))
+    # A 401 tells the client which kind of login is expected (RFC 6750).
+    headers = dict(error.headers)
+    if error.status_code == 401:
+        headers["WWW-Authenticate"] = "Bearer"
     return error_response(
         request,
         status_code=error.status_code,
         code=error.code,
         message=error.message,
         details=error.details,
+        headers=headers,
     )
 
 

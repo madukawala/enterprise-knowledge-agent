@@ -5,6 +5,7 @@ Each reply here is recorded from the real FastAPI app with scripted agents
 on the stream format, the headers and the error shape.
 """
 
+import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import closing
@@ -13,9 +14,11 @@ import httpx
 import pytest
 
 from core.config import Settings
+from security.roles import Role
 from tests.helpers.agents import FakeSearcher, hit, result_with
 from tests.helpers.chat import answering_model, chat_app
-from tests.helpers.ui import Playback, record
+from tests.helpers.tokens import TEST_USERS, TOKENS
+from tests.helpers.ui import API_URL, Playback, profile_for, record
 from ui.client import ApiError, ChatClient, StreamOpened
 from ui.config import UiSettings
 from ui.conversation import Turn, TurnStatus
@@ -33,7 +36,8 @@ def _client(transport: httpx.BaseTransport) -> ChatClient:
 def _turn_from(client: ChatClient, question: str, **options: str) -> tuple[Turn, StreamOpened]:
     turn = Turn(question=question)
     opened: StreamOpened | None = None
-    with closing(client.ask(question, role=options.pop("role", "viewer"), **options)) as stream:
+    token = options.pop("token", "test-token")
+    with closing(client.ask(question, token=token, **options)) as stream:
         for item in stream:
             if isinstance(item, StreamOpened):
                 opened = item
@@ -71,6 +75,7 @@ def test_the_ui_builds_the_same_answer_the_api_sent(settings: Settings) -> None:
         "supervisor",
         "response",
         "validator",
+        "memory",
     ]
     assert all(step.status == "ok" for step in turn.steps)
     assert [check["stage"] for check in turn.checks] == ["input", "output"]
@@ -91,24 +96,26 @@ def test_a_rewrite_shows_up_as_a_restart_and_the_final_text_wins(settings: Setti
     ]
 
 
-def test_the_request_carries_the_question_thread_and_role_and_nothing_else(
+def test_the_request_carries_the_question_thread_and_token_and_nothing_else(
     settings: Settings,
 ) -> None:
     app = chat_app(settings, answering_model("A [1].", "B [1]."), _searcher())
-    first = record(app, "pool?", headers={"X-Dev-Role": "analyst"})
+    first = record(app, "pool?", role=Role.ANALYST)
     thread_id = first.headers["x-thread-id"]
-    second = record(app, "and then?", thread_id=thread_id, headers={"X-Dev-Role": "analyst"})
+    second = record(app, "and then?", thread_id=thread_id, role=Role.ANALYST)
     playback = Playback(first, second)
     client = _client(playback)
 
-    _turn_from(client, "pool?", role="analyst")
-    turn, opened = _turn_from(client, "and then?", role="analyst", thread_id=thread_id)
+    _turn_from(client, "pool?", token="analyst-token")
+    turn, opened = _turn_from(client, "and then?", token="analyst-token", thread_id=thread_id)
 
     assert opened.thread_id == thread_id
     assert turn.text == "B [1]."
     bodies = [json.loads(request.content) for request in playback.requests]
     assert bodies == [{"message": "pool?"}, {"message": "and then?", "thread_id": thread_id}]
-    assert {request.headers["x-dev-role"] for request in playback.requests} == {"analyst"}
+    # The role is never sent: the API reads it from the token.
+    auth = {request.headers["authorization"] for request in playback.requests}
+    assert auth == {"Bearer analyst-token"}
     assert {request.url.path for request in playback.requests} == {"/chat"}
 
 
@@ -119,14 +126,17 @@ def test_the_request_carries_the_question_thread_and_role_and_nothing_else(
 
 def _refusal(reply: httpx.Response) -> ApiError:
     client = _client(Playback(reply))
-    with pytest.raises(ApiError) as caught, closing(client.ask("pool?", role="viewer")) as stream:
+    with (
+        pytest.raises(ApiError) as caught,
+        closing(client.ask("pool?", token="test-token")) as stream,
+    ):
         list(stream)
     return caught.value
 
 
 def test_a_busy_conversation_gives_the_apis_own_message(settings: Settings) -> None:
     app = chat_app(settings, answering_model("A [1]."), _searcher())
-    app.state.threads.start("thread-0001", owner="role:viewer")
+    app.state.threads.start("thread-0001", owner=TEST_USERS[Role.VIEWER].user_id)
 
     error = _refusal(record(app, "pool?", thread_id="thread-0001"))
 
@@ -139,7 +149,7 @@ def test_someone_elses_conversation_is_not_found(settings: Settings) -> None:
     app = chat_app(settings, answering_model("A [1]."), _searcher())
     thread_id = record(app, "pool?").headers["x-thread-id"]
 
-    error = _refusal(record(app, "pool?", thread_id=thread_id, headers={"X-Dev-Role": "admin"}))
+    error = _refusal(record(app, "pool?", thread_id=thread_id, role=Role.ADMIN))
 
     assert (error.status, error.code) == (404, "not_found")
 
@@ -154,7 +164,7 @@ def test_a_request_the_api_rejects_explains_why(settings: Settings) -> None:
 def test_agents_that_are_not_running_give_503(settings: Settings) -> None:
     from api.main import create_app
 
-    error = _refusal(record(create_app(settings), "pool?"))
+    error = _refusal(record(create_app(settings, signing_keys=TOKENS.signing_keys), "pool?"))
     assert (error.status, error.message) == (
         503,
         "The assistant is not available right now. Please try again later.",
@@ -205,7 +215,7 @@ def test_an_api_that_is_down_is_reported_without_internal_details() -> None:
         raise httpx.ConnectError("[Errno 61] Connection refused at 10.0.0.5", request=request)
 
     with pytest.raises(ApiError) as caught:
-        list(_client(httpx.MockTransport(refuse)).ask("pool?", role="viewer"))
+        list(_client(httpx.MockTransport(refuse)).ask("pool?", token="test-token"))
     assert caught.value.message == (
         "Cannot reach the assistant at http://localhost:8000. Is the API running?"
     )
@@ -216,7 +226,7 @@ def test_a_connection_lost_half_way_keeps_what_arrived() -> None:
     body = _BreaksHalfWay(httpx.ReadError("reset"))
     items: list[object] = []
     with pytest.raises(ApiError, match="connection to the assistant was lost"):
-        items.extend(_client(_streaming(body)).ask("pool?", role="viewer"))
+        items.extend(_client(_streaming(body)).ask("pool?", token="test-token"))
     assert isinstance(items[0], StreamOpened)
     assert items[1] == {"type": "token", "text": "Half"}
     assert isinstance(items[2], KeepAlive)
@@ -226,13 +236,13 @@ def test_a_connection_lost_half_way_keeps_what_arrived() -> None:
 def test_a_silent_api_times_out_with_a_clear_message() -> None:
     body = _BreaksHalfWay(httpx.ReadTimeout("no data"))
     with pytest.raises(ApiError, match="took too long"):
-        list(_client(_streaming(body)).ask("pool?", role="viewer"))
+        list(_client(_streaming(body)).ask("pool?", token="test-token"))
 
     def slow(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("slow", request=request)
 
     with pytest.raises(ApiError, match="did not answer in time"):
-        list(_client(httpx.MockTransport(slow)).ask("pool?", role="viewer"))
+        list(_client(httpx.MockTransport(slow)).ask("pool?", token="test-token"))
 
 
 def test_an_event_the_ui_cannot_read_is_an_error_not_a_crash() -> None:
@@ -241,12 +251,12 @@ def test_an_event_the_ui_cannot_read_is_an_error_not_a_crash() -> None:
             yield b"event: token\ndata: not json\n\n"
 
     with pytest.raises(ApiError, match="could not read"):
-        list(_client(_streaming(Garbled())).ask("pool?", role="viewer"))
+        list(_client(_streaming(Garbled())).ask("pool?", token="test-token"))
 
 
 def test_stopping_early_closes_the_connection() -> None:
     body = _BreaksHalfWay(AssertionError("read past the stop"))
-    with closing(_client(_streaming(body)).ask("pool?", role="viewer")) as stream:
+    with closing(_client(_streaming(body)).ask("pool?", token="test-token")) as stream:
         next(stream)  # StreamOpened
         assert next(stream) == {"type": "token", "text": "Half"}
     assert body.closed
@@ -260,3 +270,71 @@ def test_the_liveness_check() -> None:
         raise httpx.ConnectError("refused", request=request)
 
     assert not _client(httpx.MockTransport(down)).is_up()
+
+
+# ---------------------------------------------------------------
+# GET /me: who is signed in
+# ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("role", list(Role))
+def test_the_profile_is_read_from_the_real_api(settings: Settings, role: Role) -> None:
+    profile = profile_for(chat_app(settings, answering_model()), role)
+
+    assert profile.role == role.value
+    assert profile.username == TEST_USERS[role].username
+    assert profile.name == TEST_USERS[role].name
+    assert {p.action for p in profile.permissions} >= {"chat", "knowledge_search"}
+    assert all(p.allowed for p in profile.allowed)
+
+
+def test_a_profile_request_with_a_bad_token_gives_401(settings: Settings) -> None:
+    app = chat_app(settings, answering_model())
+
+    async def call() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url=API_URL) as http:
+            reply = await http.get("/me", headers={"Authorization": "Bearer nonsense"})
+            return httpx.Response(reply.status_code, headers=reply.headers, content=reply.content)
+
+    reply = asyncio.run(call())
+    with pytest.raises(ApiError) as caught:
+        _client(Playback(reply)).me("nonsense")
+    assert caught.value.status == 401
+    assert caught.value.message == "You need to sign in again."
+
+
+def test_a_profile_the_ui_cannot_read_is_an_error() -> None:
+    reply = httpx.Response(200, json={"username": "x"})
+    with pytest.raises(ApiError, match="could not read"):
+        _client(Playback(reply)).me("token")
+
+
+def test_an_unreachable_api_when_reading_the_profile_is_explained() -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(ApiError, match="Cannot reach the assistant"):
+        _client(httpx.MockTransport(refuse)).me("token")
+
+
+def test_a_429_carries_the_wait_from_retry_after(settings: Settings) -> None:
+    app = chat_app(settings.model_copy(update={"rate_limit_burst": 1}), answering_model("A [1]."))
+    record(app, "first")
+    error = _refusal(record(app, "second"))
+
+    assert error.status == 429
+    assert error.retry_after is not None
+    assert error.retry_after > 0
+    assert error.message.startswith("You are asking questions faster than allowed")
+
+
+def test_the_profile_carries_todays_budget(settings: Settings) -> None:
+    app = chat_app(settings, answering_model("A [1]."), _searcher())
+    record(app, "pool?")  # three model calls of 120 tokens
+    profile = profile_for(app, Role.VIEWER)
+
+    assert profile.budget is not None
+    assert profile.budget.used == 360
+    assert profile.budget.limit == settings.rate_limit_viewer_daily_tokens
+    assert 0 < profile.budget.share_used < 1

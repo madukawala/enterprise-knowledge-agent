@@ -11,6 +11,14 @@ The graph is run with three stream modes at once:
   not text for the user.
 - `values`: the whole state after each step. The last one holds the answer.
 
+Personal data in the streamed preview: the validator masks personal data
+in the final answer, but tokens reach the user before it runs. So the
+preview is masked as it streams: the recorder masks all the text so far
+and sends only what lies more than `PREVIEW_HOLDBACK` characters before the
+end, because a value at the very end (a phone number, a card number) may
+still be growing. The held-back tail is sent as soon as the response
+agent has finished the draft.
+
 `RunRecorder` keeps what it needs between messages (start times, the
 current answer attempt) and remembers the final state, so the service can
 build the `response_end` event and the `AgentRun` from it.
@@ -27,17 +35,35 @@ from agents.events import (
     AgentEvent,
     AgentStateEvent,
     DegradedEvent,
+    MemoryEvent,
     NodeEndEvent,
     NodeStartEvent,
+    ResearchBatchRef,
+    ResearchEvent,
     ResponseEndEvent,
     ResponseStartEvent,
     RetrievalEvent,
     SourceRef,
     TokenEvent,
+    ToolCallEvent,
     ValidationEvent,
 )
 from agents.nodes.response import NOT_FOUND_REPLY, fallback_answer
-from agents.state import AgentError, AgentName, Answer, LLMCall, Plan, SearchSummary, Step
+from agents.state import (
+    AgentError,
+    AgentName,
+    Answer,
+    LLMCall,
+    Plan,
+    ResearchSummary,
+    SearchSummary,
+    Step,
+    ToolRecord,
+)
+from core.pii import mask_text
+
+# Longer than any value the masker looks for (a spaced IBAN is 34 characters).
+PREVIEW_HOLDBACK = 48
 
 STREAM_MODES: list[StreamMode] = ["tasks", "messages", "values"]
 
@@ -56,6 +82,10 @@ class RunRecorder:
         self._model_call: str | None = None
         self._held = ""
         self._holding = True
+        # The draft's text as the model wrote it, and how much of its masked
+        # form has been sent.
+        self._raw = ""
+        self._sent = 0
 
     def accepted(self) -> AgentStateEvent:
         """The first event of every run."""
@@ -128,7 +158,10 @@ class RunRecorder:
         failed = task.get("error") is not None or errors.get(node.value) is not None
         self.nodes.append(node.value)
 
-        events = self._work_done(node, update, errors)
+        # The draft is finished, so nothing at its end can still grow: send
+        # the rest of the masked preview before the node's end event.
+        events = self._flush() if node is AgentName.RESPONSE else []
+        events += self._work_done(node, update, errors)
         steps: Sequence[Step] = update.get("steps") or []
         events.append(
             NodeEndEvent(
@@ -168,6 +201,26 @@ class RunRecorder:
         search = update.get("search")
         if isinstance(search, SearchSummary):
             events.append(_retrieval_event(search))
+        for record in update.get("tool_results") or []:
+            if isinstance(record, ToolRecord):
+                events.append(
+                    ToolCallEvent(
+                        tool=record.tool,
+                        arguments=record.arguments,
+                        ok=record.ok,
+                        items=record.items,
+                        error=record.error,
+                        duration_ms=record.duration_ms,
+                    )
+                )
+        saved = update.get("memory_saved")
+        if node is AgentName.MEMORY and saved:
+            events.append(MemoryEvent(saved=tuple(saved)))
+        research = update.get("research")
+        if isinstance(research, ResearchSummary):
+            events.append(_research_event(research))
+        if (error := errors.get(AgentName.RESEARCH.value)) is not None:
+            events.append(DegradedEvent(dependency="documents", message=error.message))
         if (error := errors.get(AgentName.RETRIEVAL.value)) is not None:
             events.append(DegradedEvent(dependency="documents", message=error.message))
         if (error := errors.get(AgentName.RESPONSE.value)) is not None:
@@ -202,6 +255,8 @@ class RunRecorder:
         self._model_call = None
         self._held = ""
         self._holding = True
+        self._raw = ""
+        self._sent = 0
 
     def _token(self, message: Any, metadata: Mapping[str, Any]) -> list[AgentEvent]:
         if not isinstance(message, AIMessageChunk):
@@ -215,9 +270,29 @@ class RunRecorder:
             self._new_draft()
             events.append(ResponseStartEvent(attempt=self._attempt, reason="model_switch"))
         self._model_call = message.id
-        if text := self._release(message.text):
+        if text := self._masked(self._release(message.text)):
             events.append(TokenEvent(text=text))
         return events
+
+    def _flush(self) -> list[AgentEvent]:
+        """The held-back end of the preview, masked."""
+        if self._holding or not self._raw:
+            return []
+        rest = mask_text(self._raw)[self._sent :]
+        self._sent += len(rest)
+        return [TokenEvent(text=rest)] if rest else []
+
+    def _masked(self, text: str) -> str:
+        """The next piece of the preview that is safe to show, with personal data masked."""
+        if not text:
+            return ""
+        self._raw += text
+        masked = mask_text(self._raw)
+        ready = len(masked) - PREVIEW_HOLDBACK
+        if ready <= self._sent:
+            return ""
+        piece, self._sent = masked[self._sent : ready], ready
+        return piece
 
     def _release(self, text: str) -> str:
         """Hold the first tokens back while the reply could still be NOT_FOUND.
@@ -235,6 +310,20 @@ class RunRecorder:
         self._holding = False
         released, self._held = self._held, ""
         return released
+
+
+def _research_event(research: ResearchSummary) -> ResearchEvent:
+    code = research.plan_code or ""
+    lines = code.splitlines()
+    return ResearchEvent(
+        plan_source=research.plan_source,
+        plan_code="\n".join(lines[:15]) + ("\n..." if len(lines) > 15 else "") or None,
+        batches=tuple(ResearchBatchRef(**report.model_dump()) for report in research.batches),
+        max_depth=research.max_depth,
+        sources=research.sources,
+        tokens_used=research.tokens_used,
+        stopped_by_budget=research.stopped_by_budget,
+    )
 
 
 def _retrieval_event(search: SearchSummary) -> RetrievalEvent:

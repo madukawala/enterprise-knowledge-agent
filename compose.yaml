@@ -1,15 +1,16 @@
 # The full local stack. Start it with `make up` (or `docker compose up -d --build --wait`).
 #
-# Services in this file today: ui, api, postgres, redis, keycloak, and the
+# Services in this file today: ui, api, sandbox, mcp, postgres, redis, keycloak (login), and the
 # optional prometheus + grafana (profile "observability") and the Pinecone
-# emulator used by tests (profile "pinecone-local"). The MCP server and the
-# Python sandbox are added by their own feature branches.
+# emulator used by tests (profile "pinecone-local").
 #
 # Layout (ADR-0009):
 #   frontend network  - the services you open in a browser. Ports are published
 #                       on 127.0.0.1 only, so nothing is reachable from the LAN.
 #   backend network   - internal: no published ports and no internet access.
 #                       Postgres and Redis live only here.
+#   sandbox network   - internal: only the API and the Python sandbox.
+#   tools network     - internal: only the API and the MCP server.
 #
 # Every service has a health check, and services wait for the ones they need
 # to be healthy before starting.
@@ -29,7 +30,8 @@ services:
   # Application
   # ---------------------------------------------------------------
   # The chat window and the agent activity panel (Streamlit). It talks to
-  # the API over the frontend network and holds no secrets of its own.
+  # the API over the frontend network and holds no secrets of its own. Users
+  # sign in through Keycloak; their tokens stay in the UI server's memory.
   ui:
     <<: *hardening
     build:
@@ -38,11 +40,16 @@ services:
     image: enterprise-knowledge-agent/ui:local
     environment:
       API_URL: http://api:8000
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: helix
+      KEYCLOAK_CLIENT_ID: enterprise-knowledge-ui
     ports:
       - "127.0.0.1:${UI_PORT:-8501}:8501"
     networks: [frontend]
     depends_on:
       api:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     user: "10001:10001"
     read_only: true
@@ -87,11 +94,33 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-helix-knowledge-agent}
       LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      # Login. The API fetches Keycloak's public signing keys over the
+      # Docker network, but tokens name the public address as their issuer.
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: helix
+      AUTH_ISSUER: http://localhost:8080/realms/helix
+      AUTH_AUDIENCE: enterprise-knowledge-api
+      # Rate limits (counts in Redis). Defaults match .env.example.
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-5}
+      RATE_LIMIT_VIEWER_PER_MINUTE: ${RATE_LIMIT_VIEWER_PER_MINUTE:-10}
+      RATE_LIMIT_ANALYST_PER_MINUTE: ${RATE_LIMIT_ANALYST_PER_MINUTE:-20}
+      RATE_LIMIT_ADMIN_PER_MINUTE: ${RATE_LIMIT_ADMIN_PER_MINUTE:-40}
+      RATE_LIMIT_ROLE_PER_MINUTE: ${RATE_LIMIT_ROLE_PER_MINUTE:-120}
+      RATE_LIMIT_VIEWER_DAILY_TOKENS: ${RATE_LIMIT_VIEWER_DAILY_TOKENS:-100000}
+      RATE_LIMIT_ANALYST_DAILY_TOKENS: ${RATE_LIMIT_ANALYST_DAILY_TOKENS:-250000}
+      RATE_LIMIT_ADMIN_DAILY_TOKENS: ${RATE_LIMIT_ADMIN_DAILY_TOKENS:-500000}
+      RATE_LIMIT_TOKENS_PER_QUESTION: ${RATE_LIMIT_TOKENS_PER_QUESTION:-4000}
+      RATE_LIMIT_FALLBACK_FACTOR: ${RATE_LIMIT_FALLBACK_FACTOR:-0.5}
+      # The Python sandbox, reachable only on the sandbox network.
+      SANDBOX_URL: http://sandbox:8100
+      # The enterprise data tools, reachable only on the tools network.
+      MCP_URL: http://mcp:8200/mcp
     volumes:
       - ./data/index:/srv/index:ro
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
-    networks: [frontend, backend]
+    networks: [frontend, backend, sandbox, tools]
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,7 +174,9 @@ services:
   redis:
     <<: *hardening
     image: redis:8.10.3-alpine
-    # Used for rate-limit counters only, so nothing is saved to disk.
+    # Holds rate-limit counters and admin changes to the limits. Counters
+    # are short-lived and limit changes fall back to .env values, so
+    # nothing is saved to disk.
     command:
       - redis-server
       - --requirepass
@@ -164,6 +195,72 @@ services:
       timeout: 3s
       start_period: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ---------------------------------------------------------------
+  # Python sandbox (sandbox/README.md)
+  # ---------------------------------------------------------------
+  # Runs Python that analysts and the research agent write. Built from the
+  # sandbox/ folder alone, so it holds no project code and no keys. It is
+  # only on the `sandbox` network, which is internal (no internet) and
+  # shared with the API alone: it cannot reach Postgres, Redis, Keycloak,
+  # the UI or anything outside.
+  sandbox:
+    <<: *hardening
+    build:
+      context: ./sandbox
+    image: enterprise-knowledge-agent/sandbox:local
+    networks: [sandbox]
+    user: "10002:10002"
+    read_only: true
+    # Each run gets an empty folder here, removed afterwards.
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    environment:
+      SANDBOX_WALL_SECONDS: "5"
+      SANDBOX_CPU_SECONDS: "5"
+      SANDBOX_MEMORY_MB: "200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+          # Stops fork bombs: the server, two runs at a time and their threads.
+          pids: 32
+
+  # ---------------------------------------------------------------
+  # Enterprise data tools: the MCP server (mcp_server/README.md)
+  # ---------------------------------------------------------------
+  # Read-only, fictional directory, service catalog and incident records.
+  # Only on the `tools` network, shared with the API alone; no internet.
+  mcp:
+    <<: *hardening
+    build:
+      context: .
+      target: mcp
+    image: enterprise-knowledge-agent/mcp:local
+    networks: [tools]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
     deploy:
       resources:
         limits:
@@ -302,6 +399,12 @@ services:
 networks:
   frontend: {}
   backend:
+    internal: true
+  # Only the API and the sandbox. No internet access.
+  sandbox:
+    internal: true
+  # Only the API and the MCP server. No internet access.
+  tools:
     internal: true
 
 volumes:

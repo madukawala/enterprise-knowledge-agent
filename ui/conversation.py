@@ -11,9 +11,8 @@ docs/architecture/09-streaming-events.md:
 - the stream ends with `response_end` or `error`. Anything else means the
   connection dropped, or the user pressed Stop.
 
-Event types this version does not know (tool calls and memory updates come
-with later branches) are kept and listed in the panel, so a newer API never
-breaks an older UI.
+Event types this version does not know are kept and listed in the panel,
+so a newer API never breaks an older UI.
 
 Everything here is plain data, kept in Streamlit's session state, so the
 rules can be tested without Streamlit.
@@ -32,6 +31,8 @@ class TurnStatus(StrEnum):
     DONE = "done"
     FAILED = "failed"
     STOPPED = "stopped"
+    # The run stopped to ask the user (the approval_required event).
+    WAITING = "waiting"
 
 
 @dataclass
@@ -60,6 +61,16 @@ class Turn:
     plan: Event | None = None
     steps: list[Step] = field(default_factory=list)
     searches: list[Event] = field(default_factory=list)
+    # The research agent's plan and batches (the "research" event).
+    research: Event | None = None
+    # Enterprise data tool calls (the "tool_call" events).
+    tools: list[Event] = field(default_factory=list)
+    # What the memory writer saved (the "memory" event).
+    memory: list[str] = field(default_factory=list)
+    # The approval request, while the run waits for the user's answer.
+    approval: Event | None = None
+    # The user's thumbs up or down on this answer, once given.
+    feedback: str | None = None
     checks: list[Event] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     other: list[Event] = field(default_factory=list)
@@ -101,6 +112,16 @@ class Turn:
                 self._finish_step(event)
             case "retrieval":
                 self.searches.append(event)
+            case "research":
+                self.research = event
+            case "tool_call":
+                self.tools.append(event)
+            case "approval_required":
+                self.approval = event
+                self.status = TurnStatus.WAITING
+            case "memory":
+                saved = event.get("saved") or []
+                self.memory.extend([saved] if isinstance(saved, str) else map(str, saved))
             case "validation":
                 self.checks.append(event)
             case "degraded":

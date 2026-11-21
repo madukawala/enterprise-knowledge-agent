@@ -127,7 +127,10 @@ def node_context(
     searcher: Searcher | None = None,
     *,
     metrics: AgentMetrics | None = None,
+    **options: Any,
 ) -> NodeContext:
+    """The nodes' dependencies. `options` sets any other NodeContext field,
+    for example `sandbox=LocalSandbox()` or `research_max_depth=2`."""
     metrics = metrics or AgentMetrics()
     return NodeContext(
         gateway=model if isinstance(model, LLMGateway) else gateway(model, metrics=metrics),
@@ -135,6 +138,7 @@ def node_context(
         metrics=metrics,
         history_messages=6,
         today=lambda: TODAY,
+        **options,
     )
 
 
@@ -144,8 +148,11 @@ def agent_graph(
     *,
     metrics: AgentMetrics | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    **options: Any,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
-    return build_graph(node_context(model, searcher, metrics=metrics), checkpointer=checkpointer)
+    return build_graph(
+        node_context(model, searcher, metrics=metrics, **options), checkpointer=checkpointer
+    )
 
 
 def agent_service(
@@ -154,9 +161,13 @@ def agent_service(
     *,
     metrics: AgentMetrics | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    **options: Any,
 ) -> AgentService:
     metrics = metrics or AgentMetrics()
+    memory = options.get("memory")
     return AgentService(
-        agent_graph(model, searcher, metrics=metrics, checkpointer=checkpointer),
+        agent_graph(model, searcher, metrics=metrics, checkpointer=checkpointer, **options),
         metrics=metrics,
+        memory=memory,
+        store=memory.store if memory is not None else None,
     )

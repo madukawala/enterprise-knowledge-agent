@@ -2,6 +2,7 @@ import asyncio
 from typing import Any
 
 import pytest
+import respx
 from pydantic import SecretStr
 
 from api import readiness
@@ -157,3 +158,14 @@ async def test_redis_probe_fails_on_a_bad_answer(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(ConnectionError):
         await redis_probe("redis://redis:6379/0")()
     assert fake.closed
+
+
+async def test_the_sandbox_is_an_optional_check() -> None:
+    settings = Settings(_env_file=None, sandbox_url="http://sandbox:8100")
+    (check,) = build_checks(settings)
+    assert (check.name, check.required) == ("sandbox", False)
+
+    with respx.mock() as router:
+        router.get("http://sandbox:8100/healthz").respond(503)
+        report = await run_checks([check], timeout_seconds=1)
+    assert report.status == "degraded"

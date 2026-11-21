@@ -5,7 +5,7 @@ Results of the evaluations in [evals/](../../evals/README.md), saved here so rev
 | Report | Written by | Measures |
 |---|---|---|
 | `retrieval.md` | `make eval-retrieval` | Hit rate, MRR and recall of hybrid search, for several alpha values |
-| Answer quality (Ragas, LangSmith) | `make eval`, added with `feature/observability-evals` | Faithfulness, relevancy, citation accuracy, routing accuracy |
+| [answers.md](answers.md) | `make eval-answers` | The right kind of answer (including refusals), citation recall, key facts, leaks above the role; grounding with `--judge`; scores sent to LangSmith with `--langsmith` |
 
 ## Status
 
@@ -15,5 +15,7 @@ The first retrieval report is in [retrieval.md](retrieval.md) (21 November 2026,
 - MRR was 0.93 for 0.3, 0.5 and 0.7, and 0.94 for 0.9: about the size of one question's first good answer moving up one place.
 
 So the search is not sensitive to alpha on this set, and `HYBRID_ALPHA` stays at `0.5`, an equal weight for meaning and keywords. A larger question set, written by real users, would be needed to justify moving it (ASSUMPTIONS R1 and R8).
+
+The first answer report is in [answers.md](answers.md) (21 November 2026, 8 cases): 7 of 8 answers were the right kind with full citation recall, and the one miss turned out to be a mistake in the question set, which was then fixed and given a leak check. A second run that day hit both free tiers' daily limits, so it records the reduced mode rather than answer quality.
 
 `make eval-retrieval` runs against the real Pinecone index, so it needs `PINECONE_API_KEY` and one `make ingest` first. Run it again after changing the documents or the search, and commit the new `retrieval.md`.

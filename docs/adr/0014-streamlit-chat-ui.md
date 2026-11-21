@@ -19,8 +19,8 @@ Streamlit is unusual: the server runs the whole script again on every click, and
 - **The UI only talks to the API.** It sends `POST /chat` with `httpx` from the Streamlit server and reads the event stream line by line. It never imports backend packages (import-linter in CI), and its Docker image is built from the `ui` dependency group alone (Streamlit, httpx) plus the `ui/` folder: no backend code or libraries are inside it.
 - **One loop per question, inside the script run.** The loop reads events and redraws two placeholders: the answer (on each token) and the panel (on every other event). Rendering is kept out of the state: `Turn.apply(event)` holds the client rules (tokens are a preview, `response_start` clears it, `response_end` wins), and plain functions draw a `Turn`.
 - **Stop uses Streamlit's own mechanism.** The chat box uses `submit_mode="stop"`: while the script runs it becomes a Stop button. Stopping ends the script run, which closes the HTTP stream, which makes the API cancel the agents. The next run marks the half-finished turn as stopped and keeps the text that arrived.
-- **State lives in `st.session_state`.** Each browser tab has its own list of conversations; each conversation keeps its thread ID (from the `X-Thread-ID` header) and its role. Changing the role starts a new conversation, because the API ties a thread to its owner.
-- **The role picker is a development stand-in.** It sends `X-Dev-Role`, which a production API refuses. `feature/auth-rbac` replaces it with a Keycloak login.
+- **State lives in `st.session_state`.** Each browser tab has its own list of conversations; each conversation keeps its thread ID (from the `X-Thread-ID` header). Signing out clears them, because the API ties a thread to the user who started it.
+- **The role picker was a development stand-in.** It sent `X-Dev-Role`, which a production API refused. `feature/auth-rbac` replaced it with a Keycloak sign-in form; the sidebar now shows the signed-in user's name, role and allowed tools (see [ADR-0007](0007-keycloak-rbac-and-data-access.md) and [ui/README.md](../../ui/README.md#sign-in)).
 - **Tested against the real API's output.** UI tests replay replies recorded from the real FastAPI app with scripted agents, and the page itself is run headless with Streamlit's `AppTest`.
 
 ## Consequences
@@ -29,7 +29,7 @@ Streamlit is unusual: the server runs the whole script again on every click, and
 - **Positive:** Stop, closing the tab and clicking elsewhere all end the run in the same way, and the API's cancellation (already tested) does the rest.
 - **Positive:** the UI image cannot import backend code even by mistake, and a UI dependency update cannot change the API image.
 - **Negative:** while an answer streams, the session is busy: other clicks stop the answer first. For a chat this is the expected behaviour; the chat box shows the Stop button to make it clear.
-- **Negative:** the conversation list is per browser tab and is lost on reload, until `feature/memory` stores threads in Postgres and adds `GET /threads`.
+- **Negative:** the activity panel of an answer is kept per browser tab only; earlier conversations come back from `GET /threads` (added with `feature/memory`) as questions and answers, without their panels.
 - **Negative:** the UI image is large (about 800 MB) because Streamlit brings pandas and pyarrow. Acceptable for a local demo; a slimmer frontend would need a different framework, which the assignment does not ask for.
 
 ## Alternatives considered

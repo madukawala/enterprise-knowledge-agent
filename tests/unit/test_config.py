@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -122,3 +125,21 @@ def test_providers_with_key_and_model_are_listed_in_failover_order() -> None:
         ("gemini", "gemini-model"),
         ("openrouter", "or-model"),
     ]
+
+
+def test_the_signing_keys_url_is_built_from_keycloak_and_the_realm() -> None:
+    settings = Settings(
+        _env_file=None, keycloak_url="http://keycloak:8080/", keycloak_realm="helix"
+    )
+    assert settings.jwks_url == "http://keycloak:8080/realms/helix/protocol/openid-connect/certs"
+
+
+def test_login_defaults_match_the_keycloak_realm_file() -> None:
+    realm = json.loads((Path(__file__).parents[2] / "infra/keycloak/realm-helix.json").read_text())
+    settings = Settings(_env_file=None)
+    assert settings.auth_issuer.endswith("/realms/" + realm["realm"])
+    mappers = realm["clients"][0]["protocolMappers"]
+    audiences = {m["config"].get("included.custom.audience") for m in mappers}
+    assert settings.auth_audience in audiences
+    # Short-lived tokens: five minutes, refreshed by the UI.
+    assert realm["accessTokenLifespan"] <= 300

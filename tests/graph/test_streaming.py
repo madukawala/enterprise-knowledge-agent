@@ -89,6 +89,8 @@ async def test_a_document_question_streams_every_step_in_order() -> None:
         "node_start:validator",
         "validation",
         "node_end:validator",
+        "node_start:memory",
+        "node_end:memory",
         "response_end",
     ]
 
@@ -129,10 +131,16 @@ async def test_the_events_carry_what_the_panel_shows() -> None:
 
 
 async def test_the_tokens_add_up_to_the_answer() -> None:
-    text = "Raise the pool size to 200 [1], then restart the workers [1]."
+    text = (
+        "Raise the pool size to 200 [1], then restart the workers [1]. Watch the slow "
+        "query dashboard for ten minutes afterwards, and open an incident if it does not "
+        "recover [1]."
+    )
     events = await _events(agent_service(_model(text), FakeSearcher([result_with(hit("RB-001"))])))
     tokens = [e for e in events if isinstance(e, TokenEvent)]
-    assert len(tokens) > 5  # really streamed, not sent in one piece
+    # Really streamed, not sent in one piece. The last 48 characters wait
+    # until the draft is finished, in case they hold personal data.
+    assert len(tokens) > 5
     assert _streamed_text(events) == text
     final = events[-1]
     assert isinstance(final, ResponseEndEvent)
@@ -220,6 +228,8 @@ async def test_a_blocked_question_reports_the_failed_input_check_and_ends() -> N
         "node_start:validator",
         "validation",
         "node_end:validator",
+        "node_start:memory",
+        "node_end:memory",
         "response_end",
     ]
     input_check = next(e for e in events if isinstance(e, ValidationEvent))
@@ -235,3 +245,21 @@ async def test_small_talk_streams_without_a_search() -> None:
     events = await _events(agent_service(model, FakeSearcher()), question="hi")
     assert not any(isinstance(e, RetrievalEvent) for e in events)
     assert _streamed_text(events) == "Hello! Ask me about the bank's documents."
+
+
+async def test_personal_data_never_appears_in_the_streamed_preview() -> None:
+    text = (
+        "Call the on-call lead on +44 20 7946 0958 or write to jane.doe@example.com, "
+        "and quote card 4111 1111 1111 1111 only if asked [1]."
+    )
+    events = await _events(agent_service(_model(text), FakeSearcher([result_with(hit("RB-001"))])))
+
+    streamed = _streamed_text(events)
+    for private in ("7946 0958", "jane.doe@example.com", "4111 1111 1111 1111"):
+        assert private not in streamed
+        assert private not in "".join(e.model_dump_json() for e in events)
+    assert "[PHONE]" in streamed
+    assert "[EMAIL]" in streamed
+    final = events[-1]
+    assert isinstance(final, ResponseEndEvent)
+    assert final.text == streamed

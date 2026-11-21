@@ -37,7 +37,10 @@ from agents.state import (
     NumberedCitation,
 )
 from core.errors import LLMUnavailableError
+from core.logging import get_logger
 from rag.retrieval import SearchHit
+
+log = get_logger(__name__)
 
 # What the model replies when the sources do not answer the question (answer.md).
 NOT_FOUND_REPLY = "NOT_FOUND"
@@ -111,6 +114,7 @@ class ResponseAgent(AgentNode):
         if validation is not None and not validation.passed:
             notes.append("Your previous draft was rejected: " + " ".join(validation.issues))
 
+        memory = [] if conversation else await self._recall(state)
         try:
             text, call = await self.context.gateway.text(
                 prompt(
@@ -119,8 +123,18 @@ class ResponseAgent(AgentNode):
                     state.get("messages", []),
                     today=self.context.today(),
                     history=self.context.history_messages,
+                    summary=state.get("summary") or "",
+                    memory=memory,
                     sources=() if conversation else hits,
                     notes=notes,
+                    findings=() if conversation else state.get("findings", []),
+                    tool_results=()
+                    if conversation
+                    else [
+                        f"{r.tool}({r.arguments}): {r.text}"
+                        for r in state.get("tool_results", [])
+                        if r.ok
+                    ],
                 ),
                 purpose="answer",
             )
@@ -158,6 +172,21 @@ class ResponseAgent(AgentNode):
             update["steps"] = [self.step(f"Wrote the answer{sources} with {written_by}.")]
         return update
 
+    async def _recall(self, state: AgentState) -> list[str]:
+        """What the user's long-term memory holds that relates to this question.
+
+        Passed to the model as data (`<memory>`). A memory failure never
+        stops the answer.
+        """
+        memory, user = self.context.memory, state.get("user")
+        if memory is None or not user:
+            return []
+        try:
+            return await memory.recall(user, state["question"])
+        except Exception as error:  # memory is optional; answer without it
+            log.warning("memory_recall_failed", error=type(error).__name__)
+            return []
+
     def _fixed_answer(self, state: AgentState) -> Answer | None:
         """The answer for situations that need no model (see the module docstring)."""
         if reason := state.get("blocked_reason"):
@@ -166,7 +195,8 @@ class ResponseAgent(AgentNode):
         if plan is not None and plan.intent is Intent.OUT_OF_SCOPE:
             return Answer(kind=AnswerKind.OUT_OF_SCOPE, text=OUT_OF_SCOPE_TEXT)
         needs_documents = plan is None or AgentName.RETRIEVAL in plan.agents
-        if needs_documents and not state.get("hits"):
+        has_tool_data = any(r.ok for r in state.get("tool_results", []))
+        if needs_documents and not state.get("hits") and not has_tool_data:
             if AgentName.RETRIEVAL.value in state.get("errors", {}):
                 return Answer(kind=AnswerKind.UNAVAILABLE, text=UNAVAILABLE_TEXT)
             return Answer(kind=AnswerKind.NOT_FOUND, text=NOT_FOUND_TEXT)

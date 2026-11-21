@@ -10,12 +10,12 @@ import httpx
 import pytest
 import respx
 import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from core.config import Settings
+from security.roles import Role
 from tests.helpers.agents import FakeSearcher, hit, result_with
 from tests.helpers.chat import answering_model, chat_app
-from tests.helpers.ui import API_URL, APP_FILE, Playback, record
+from tests.helpers.ui import API_URL, Playback, page_for, record
 from ui.client import ChatClient
 from ui.config import UiSettings
 
@@ -28,6 +28,7 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[respx.MockRouter]:
     st.cache_data.clear()
     with respx.mock(base_url=API_URL, assert_all_called=False) as router:
         router.get("/healthz").respond(200, json={"status": "ok"})
+        router.get("/threads").respond(200, json=[])
         yield router
 
 
@@ -39,8 +40,7 @@ def test_html_in_an_answer_is_shown_as_text_and_never_run(
     app = chat_app(settings, answering_model(answer), FakeSearcher([result_with(hit("RB-001"))]))
     api.post("/chat").mock(return_value=record(app, "pool?"))
 
-    page = AppTest.from_file(str(APP_FILE), default_timeout=30).run()
-    page = page.chat_input[0].set_value("pool?").run()
+    page = page_for(Role.VIEWER).chat_input[0].set_value("pool?").run()
 
     assert any("onerror" in m.value for m in page.markdown)
     assert not any(m.proto.allow_html for m in page.markdown)
@@ -49,16 +49,16 @@ def test_html_in_an_answer_is_shown_as_text_and_never_run(
 
 def test_the_ui_never_sends_a_role_or_access_level_in_the_body(settings: Settings) -> None:
     app = chat_app(settings, answering_model("A [1]."), FakeSearcher([result_with(hit("RB-1"))]))
-    playback = Playback(record(app, "pool?", headers={"X-Dev-Role": "admin"}))
+    playback = Playback(record(app, "pool?", role=Role.ADMIN))
     client = ChatClient(UiSettings(), transport=playback)
 
-    list(client.ask("pool?", role="admin"))
+    list(client.ask("pool?", token="admin-token"))
 
     (request,) = playback.requests
     assert set(json.loads(request.content)) == {"message"}
-    # The role travels only in the development header, which a production
-    # API refuses (tests/security/test_chat_security.py).
-    assert request.headers["x-dev-role"] == "admin"
+    # Only the login token travels; the API reads the role from it.
+    assert request.headers["authorization"] == "Bearer admin-token"
+    assert not any(name.startswith("x-dev") for name in request.headers)
 
 
 def test_streamlit_keeps_its_protections_and_sends_nothing_out() -> None:
@@ -95,6 +95,6 @@ def test_connection_errors_do_not_show_internal_details() -> None:
 
     client = ChatClient(UiSettings(), transport=httpx.MockTransport(refuse))
     with pytest.raises(Exception, match="Cannot reach") as caught:
-        list(client.ask("pool?", role="viewer"))
+        list(client.ask("pool?", token="test-token"))
     assert "10.0.3.7" not in str(caught.value)
     assert "Errno" not in str(caught.value)

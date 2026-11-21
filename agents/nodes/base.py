@@ -20,10 +20,16 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, ClassVar, Protocol
 
+from langgraph.errors import GraphBubbleUp
+
 from agents.llm import LLMGateway
+from agents.memory import LongTermMemory
 from agents.state import AgentError, AgentName, AgentState, ErrorKind, Step
 from agents.telemetry import AgentMetrics
+from agents.tools.enterprise import EnterpriseTools
+from agents.tools.sandbox import CodeRunner
 from core.logging import get_logger
+from rag.catalog import Catalog
 from rag.retrieval import SearchRequest, SearchResult
 from security.roles import Role
 
@@ -49,6 +55,23 @@ class NodeContext:
     history_messages: int = 6
     # A function, so tests can fix "today" for date questions.
     today: Callable[[], date] = date.today
+    # The research agent's tools and limits. Without a sandbox, research
+    # uses its fixed plan; without a catalog, it explores nothing.
+    sandbox: CodeRunner | None = None
+    catalog: Catalog | None = None
+    research_max_depth: int = 3
+    research_max_fanout: int = 5
+    research_token_budget: int = 40_000
+    research_max_sources: int = 20
+    research_parallel_calls: int = 2
+    # Ask the user before running deep research (the human approval step).
+    approval_for_research: bool = False
+    # The enterprise data tools (the MCP server). None: not configured.
+    enterprise: EnterpriseTools | None = None
+    # Long-term memory (None: off) and when to summarise a long thread.
+    memory: LongTermMemory | None = None
+    summary_after_messages: int = 12
+    research_max_extractions: int = 4
 
 
 class AgentNode(ABC):
@@ -71,6 +94,10 @@ class AgentNode(ABC):
         started = time.perf_counter()
         try:
             return await self.run(state)
+        except GraphBubbleUp:
+            # LangGraph's own control flow, such as `interrupt()` for human
+            # approval: not a failure, so it must reach the graph untouched.
+            raise
         except Exception:
             log.exception("agent_node_failed", node=self.name.value)
             self.context.metrics.node_error(self.name, ErrorKind.INTERNAL)

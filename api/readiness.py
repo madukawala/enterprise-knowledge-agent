@@ -9,9 +9,9 @@ Checks are either required or optional:
 - A failed **required** check (Postgres, Redis) makes the API "not_ready"
   and `/readyz` returns 503. Docker then marks the container unhealthy and
   services that depend on the API wait.
-- A failed **optional** check makes the API "degraded" but still ready.
-  Later branches use this for services the API can work around, such as a
-  language model provider while the fallback model is still available.
+- A failed **optional** check makes the API "degraded" but still ready:
+  the Python sandbox (without it the Python tool answers 503 and research
+  uses its fixed plan).
 
 The response says only "ok", "failed" or "timeout" per check. The reason is
 written to the log, never returned, because driver errors can contain host
@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+import httpx
 import psycopg
 import redis.asyncio as redis
 
@@ -108,6 +109,15 @@ def redis_probe(url: str) -> Probe:
     return probe
 
 
+def http_probe(url: str) -> Probe:
+    async def probe() -> None:
+        async with httpx.AsyncClient() as http:
+            response = await http.get(url)
+            response.raise_for_status()
+
+    return probe
+
+
 def build_checks(settings: Settings) -> list[ReadinessCheck]:
     """Return the checks for every service that has a connection string set."""
     checks: list[ReadinessCheck] = []
@@ -117,4 +127,7 @@ def build_checks(settings: Settings) -> list[ReadinessCheck]:
         )
     if settings.redis_url and settings.redis_url.get_secret_value():
         checks.append(ReadinessCheck("redis", redis_probe(settings.redis_url.get_secret_value())))
+    if settings.sandbox_url:
+        sandbox_health = settings.sandbox_url.rstrip("/") + "/healthz"
+        checks.append(ReadinessCheck("sandbox", http_probe(sandbox_health), required=False))
     return checks

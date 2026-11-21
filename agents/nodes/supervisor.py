@@ -12,6 +12,12 @@ The supervisor runs more than once per question:
   or go on to the answer with what we have. No model call, so these
   decisions are free, fast and easy to test.
 
+Permissions: some intents need a tool that not every role may use (deep
+research, the enterprise data tools). Code checks the role against the
+role matrix (security/policies.py) after the model has chosen the intent.
+A role without the permission gets a plain document question instead
+(normal search, no tools), and the answer says why. The model never decides what a role may do.
+
 Failure containment: if the model cannot be reached, the supervisor uses a
 safe default plan (search every collection, then answer), and the answer
 says so. If an agent failed, the supervisor retries it once when that can
@@ -27,35 +33,37 @@ from agents.context import prompt
 from agents.nodes.base import AgentNode, StateUpdate
 from agents.state import AgentError, AgentName, AgentState, ErrorKind, Intent, Plan
 from core.errors import LLMUnavailableError
-from core.logging import get_logger
+from core.logging import SECURITY_LOGGER, get_logger
+from security.policies import ACTION_LABELS, Action, is_allowed
+from security.roles import Role
 
 log = get_logger(__name__)
+security_log = get_logger(SECURITY_LOGGER)
 
-# Which agents each intent needs before the answer is written. The research
-# agent (feature/rlm-research) and the tool agent (feature/python-sandbox,
-# feature/mcp-server) are added here as they are built. Until then, research
-# questions use a wider search and enterprise-data questions search the
-# documents, and the answer says so.
+# Which agents each intent needs before the answer is written. Research
+# questions go to the research agent (recursive search, ADR-0011), and
+# enterprise-data questions to the tools agent (the MCP server) and then
+# the documents.
 AGENTS_FOR_INTENT = MappingProxyType(
     {
         Intent.DOCUMENT_QUESTION: (AgentName.RETRIEVAL,),
-        Intent.RESEARCH: (AgentName.RETRIEVAL,),
-        Intent.ENTERPRISE_DATA: (AgentName.RETRIEVAL,),
+        Intent.RESEARCH: (AgentName.RESEARCH,),
+        # Live data first, then the documents, so the answer can use both.
+        Intent.ENTERPRISE_DATA: (AgentName.TOOLS, AgentName.RETRIEVAL),
         Intent.CONVERSATION: (),
         Intent.OUT_OF_SCOPE: (),
     }
 )
 
-LIMIT_FOR_INTENT = MappingProxyType(
+# Fixed notes for intents the system can only partly serve. Empty now that
+# research and the enterprise tools exist; kept for future intents.
+LIMIT_FOR_INTENT: MappingProxyType[Intent, str] = MappingProxyType({})
+
+# The permission each intent needs, beyond chat and knowledge search.
+ACTION_FOR_INTENT = MappingProxyType(
     {
-        Intent.RESEARCH: (
-            "Deep research across many documents is not available yet, so this answer "
-            "comes from one wider search."
-        ),
-        Intent.ENTERPRISE_DATA: (
-            "The enterprise data tools (directory, service catalog, incident records) are "
-            "not connected yet, so this answer comes from the documents only."
-        ),
+        Intent.RESEARCH: Action.RECURSIVE_RESEARCH,
+        Intent.ENTERPRISE_DATA: Action.MCP_TOOLS,
     }
 )
 
@@ -102,6 +110,7 @@ class Supervisor(AgentNode):
                     state.get("messages", []),
                     today=context.today(),
                     history=context.history_messages,
+                    summary=state.get("summary") or "",
                 ),
                 purpose="supervisor",
             )
@@ -123,10 +132,22 @@ class Supervisor(AgentNode):
                 ],
             }
 
+        # The input guard has already refused a run without a role; the
+        # lowest role is only a safe default for tests that skip it.
+        role = state.get("role") or Role.VIEWER
+        intent = decision.intent
+        limit = _role_limit(intent, role)
+        if limit is not None:
+            intent = Intent.DOCUMENT_QUESTION
+        limit = limit or LIMIT_FOR_INTENT.get(intent)
+        agents = AGENTS_FOR_INTENT[intent]
+        if intent is Intent.RESEARCH and context.approval_for_research:
+            # Deep research is costly: ask the user first (agents/nodes/approval.py).
+            agents = (AgentName.APPROVAL, *agents)
         plan = Plan(
-            intent=decision.intent,
+            intent=intent,
             steps=tuple(step.strip() for step in decision.plan if step.strip())[:4],
-            agents=AGENTS_FOR_INTENT[decision.intent],
+            agents=agents,
             reason=decision.reason.strip()[:200],
         )
         update: StateUpdate = {
@@ -140,7 +161,7 @@ class Supervisor(AgentNode):
                 )
             ],
         }
-        if limit := LIMIT_FOR_INTENT.get(plan.intent):
+        if limit:
             update["limits"] = [limit]
         log.info("supervisor_planned", intent=plan.intent.value, agents=len(plan.agents))
         return update
@@ -154,6 +175,23 @@ class Supervisor(AgentNode):
         attempts = state.get("retrieval_attempts", 0)
         retrieval_error = errors.get(AgentName.RETRIEVAL.value)
         search = state.get("search")
+
+        # Research was not approved: one normal search instead.
+        if state.get("approval") == "rejected" and AgentName.RETRIEVAL not in state.get(
+            "completed", []
+        ):
+            return {"next_agent": AgentName.RETRIEVAL}
+
+        # The research agent failed completely: fall back to one wide search.
+        if (
+            errors.get(AgentName.RESEARCH.value) is not None
+            and AgentName.RETRIEVAL not in state.get("completed", [])
+            and not state.get("hits")
+        ):
+            return {
+                "next_agent": AgentName.RETRIEVAL,
+                "steps": [self.step("Research did not work, so ran one wide search instead.")],
+            }
 
         if attempts < MAX_RETRIEVAL_ATTEMPTS:
             if retrieval_error is not None and retrieval_error.retryable:
@@ -181,6 +219,23 @@ class Supervisor(AgentNode):
             plan = default_plan()
             return {"plan": plan, "next_agent": plan.agents[0]}
         return {"next_agent": AgentName.RESPONSE}
+
+
+def _role_limit(intent: Intent, role: Role) -> str | None:
+    """What the answer should say when the role may not use what the intent needs.
+
+    None when the role may. Otherwise the caller runs the question as a
+    plain document question (no wider research search, and later no
+    research or tool agents) and adds this text to the answer's limits.
+    """
+    action = ACTION_FOR_INTENT.get(intent)
+    if action is None or is_allowed(role, action):
+        return None
+    security_log.info("tool_not_offered", action=action.value, role=role.value)
+    return (
+        f"Your role ({role.value}) cannot use {ACTION_LABELS[action].lower()}, "
+        "so this answer comes from a normal document search."
+    )
 
 
 def _has_optional_filters(state: AgentState) -> bool:

@@ -42,7 +42,11 @@ class EventType(StrEnum):
     NODE_START = "node_start"
     NODE_END = "node_end"
     RETRIEVAL = "retrieval"
+    RESEARCH = "research"
     VALIDATION = "validation"
+    MEMORY = "memory"
+    TOOL_CALL = "tool_call"
+    APPROVAL_REQUIRED = "approval_required"
     DEGRADED = "degraded"
     RESPONSE_START = "response_start"
     # An event name, not a password; both security linters are told so.
@@ -98,6 +102,63 @@ class RetrievalEvent(_Event):
     alpha: float
     took_ms: int
     relaxed: bool = False
+
+
+class ResearchBatchRef(_Event):
+    label: str
+    depth: int
+    hits: int
+    findings: int
+    error: str | None = None
+    split: bool = False
+
+
+class ResearchEvent(_Event):
+    """What the research agent did: its plan, the batches and how deep it went."""
+
+    type: Literal[EventType.RESEARCH] = EventType.RESEARCH
+    # "sandbox" (the model's Python plan) or "fallback" (the fixed plan)
+    plan_source: str
+    # The plan's first lines, as run in the sandbox.
+    plan_code: str | None = None
+    batches: tuple[ResearchBatchRef, ...]
+    max_depth: int
+    sources: int
+    tokens_used: int
+    stopped_by_budget: bool = False
+
+
+class ApprovalRequiredEvent(_Event):
+    """The run stopped to ask the user. The last event of the stream.
+
+    Answer with `POST /approvals/{approval_id}` and {"approve": true|false};
+    that request streams the rest of the run.
+    """
+
+    type: Literal[EventType.APPROVAL_REQUIRED] = EventType.APPROVAL_REQUIRED
+    # The thread ID: one question waits per thread.
+    approval_id: str
+    action: str
+    message: str
+
+
+class ToolCallEvent(_Event):
+    """One enterprise data tool call: which tool, its arguments, and how it went."""
+
+    type: Literal[EventType.TOOL_CALL] = EventType.TOOL_CALL
+    tool: str
+    arguments: dict[str, Any]
+    ok: bool
+    items: int = 0
+    error: str | None = None
+    duration_ms: int = 0
+
+
+class MemoryEvent(_Event):
+    """What the memory writer saved: remembered questions, profile, summary."""
+
+    type: Literal[EventType.MEMORY] = EventType.MEMORY
+    saved: tuple[str, ...]
 
 
 class ValidationEvent(_Event):
@@ -180,6 +241,10 @@ AgentEvent = Annotated[
     | NodeStartEvent
     | NodeEndEvent
     | RetrievalEvent
+    | ResearchEvent
+    | MemoryEvent
+    | ToolCallEvent
+    | ApprovalRequiredEvent
     | ValidationEvent
     | DegradedEvent
     | ResponseStartEvent

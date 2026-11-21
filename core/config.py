@@ -130,11 +130,51 @@ class Settings(BaseSettings):
     # moving on to the next one.
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     llm_max_retries: int = Field(default=1, ge=0, le=5)
+    # Circuit breaker per provider (agents/breaker.py): this many failures
+    # within the window, or one rate-limit reply, and the provider is skipped
+    # for `llm_breaker_open_seconds`, then probed with one call.
+    llm_breaker_failures: int = Field(default=5, ge=1, le=100)
+    llm_breaker_window_seconds: float = Field(default=60.0, gt=0, le=3600)
+    llm_breaker_open_seconds: float = Field(default=30.0, gt=0, le=3600)
 
     # --- Agents (ADR-0006) ---
     # How many earlier messages of the conversation the agents see. Enough
     # for follow-up questions; small enough to keep prompts and quota low.
     agent_history_messages: int = Field(default=6, ge=0, le=20)
+
+    # --- Research agent (ADR-0011, docs/architecture/05-rlm-research.md) ---
+    # A research question is split into batches, each investigated by a
+    # sub-agent; a batch with too much material splits again. These bound
+    # how far it goes, so one question cannot use up the free model quota.
+    research_max_depth: int = Field(default=3, ge=1, le=5)
+    research_max_fanout: int = Field(default=5, ge=1, le=10)
+    # Model tokens one research run may use before it stops splitting and
+    # extracting, and answers with what it has.
+    research_token_budget: int = Field(default=40_000, ge=1_000, le=500_000)
+    # Most sources handed to the answer, across every batch.
+    research_max_sources: int = Field(default=20, ge=1, le=40)
+    # Free model tiers allow only a few requests a minute. Sub-agents make
+    # at most this many model calls at the same time, and only this many
+    # batches get findings written by the model; the others still give
+    # their sources to the answer.
+    research_parallel_calls: int = Field(default=2, ge=1, le=10)
+    research_max_extractions: int = Field(default=4, ge=0, le=20)
+
+    # --- Memory (ADR-0008) ---
+    # Long-term memory per user: their profile and one-line summaries of
+    # past questions, recalled into later answers. Off: nothing is saved.
+    memory_enabled: bool = True
+    # Threads and long-term memory older than this are deleted by the admin
+    # clean-up (POST /admin/memory/cleanup).
+    memory_retention_days: int = Field(default=30, ge=1, le=3650)
+    # When a thread has more messages than this, the older ones are replaced
+    # in prompts by a running summary (one model call, every few turns).
+    memory_summary_after_messages: int = Field(default=12, ge=4, le=100)
+
+    # --- Human approval ---
+    # Deep research can cost several model calls, so the user is asked to
+    # approve it first (POST /approvals/{thread_id}). Off: it runs at once.
+    approval_for_research: bool = True
 
     # --- Chat stream (POST /chat) ---
     # Time limit for one whole answer. A normal question takes 10 to 40
@@ -144,6 +184,83 @@ class Settings(BaseSettings):
     # A comment line is sent when nothing else was sent for this long, so
     # proxies keep the connection open and a closed browser tab is noticed.
     chat_keepalive_seconds: float = Field(default=15.0, gt=0, le=60)
+
+    # --- Login (Keycloak, ADR-0007) ---
+    # Every request except the health checks and /metrics needs a Keycloak
+    # access token. The API checks the token itself with Keycloak's public
+    # signing keys; it never sends the token anywhere.
+    #
+    # Where the API fetches the signing keys from. Inside Docker this is
+    # http://keycloak:8080; outside Docker, http://localhost:8080.
+    keycloak_url: str = Field(default="http://localhost:8080", pattern=r"^https?://")
+    keycloak_realm: str = Field(default="helix", min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
+    # The issuer written in every token. Keycloak always names its public
+    # address here (http://localhost:8080 locally), even when the API talks
+    # to it over the Docker network, so this is set on its own.
+    auth_issuer: str = Field(default="http://localhost:8080/realms/helix", pattern=r"^https?://")
+    # A token is only accepted if it was issued for this API.
+    auth_audience: str = Field(default="enterprise-knowledge-api", min_length=1)
+    # How long the signing keys are kept before they are fetched again. A
+    # token signed with a key the API has not seen yet makes it fetch the
+    # keys at once (at most every `auth_jwks_min_refresh_seconds`), so a key
+    # rotation in Keycloak does not need a restart.
+    auth_jwks_cache_seconds: int = Field(default=300, ge=10, le=86_400)
+    auth_jwks_min_refresh_seconds: int = Field(default=30, ge=1, le=3_600)
+    # Clocks on two machines are never exactly the same. A token is still
+    # accepted this many seconds after it expires.
+    auth_clock_skew_seconds: int = Field(default=30, ge=0, le=120)
+    auth_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+
+    # --- Rate limiting (security/rate_limit.py) ---
+    # Two limits per question, both kept in Redis so every API worker sees
+    # the same counts:
+    #
+    # 1. Questions per minute, as token buckets: one per user (sized by the
+    #    user's role) and one shared by all users of a role. A user may send
+    #    `rate_limit_burst` questions back to back, then one more each time
+    #    the bucket refills.
+    # 2. A daily budget of language model tokens per user, by role. Each
+    #    question reserves `rate_limit_tokens_per_question` before it runs,
+    #    and the reservation is corrected to the real count when the answer
+    #    ends. A question the user abandons keeps its reservation, so leaving
+    #    early does not dodge the budget.
+    #
+    # Admins can change the per-role numbers while the API runs
+    # (PUT /admin/rate-limits/{role}); these are the starting values.
+    rate_limit_enabled: bool = True
+    rate_limit_burst: int = Field(default=5, ge=1, le=100)
+    rate_limit_viewer_per_minute: int = Field(default=10, ge=1, le=600)
+    rate_limit_analyst_per_minute: int = Field(default=20, ge=1, le=600)
+    rate_limit_admin_per_minute: int = Field(default=40, ge=1, le=600)
+    # All users of one role together. Protects the shared free model quota
+    # from many users at once.
+    rate_limit_role_per_minute: int = Field(default=120, ge=1, le=10_000)
+    rate_limit_viewer_daily_tokens: int = Field(default=100_000, ge=1_000)
+    rate_limit_analyst_daily_tokens: int = Field(default=250_000, ge=1_000)
+    rate_limit_admin_daily_tokens: int = Field(default=500_000, ge=1_000)
+    # A normal question uses 3 model calls and 3,000 to 6,000 tokens.
+    rate_limit_tokens_per_question: int = Field(default=4_000, ge=1, le=100_000)
+    # If Redis stops answering, each API worker keeps its own counts in
+    # memory, with every limit multiplied by this, because the workers can
+    # no longer see each other's counts.
+    rate_limit_fallback_factor: float = Field(default=0.5, gt=0, le=1)
+    # A rate-limit check must never slow a question down for long.
+    rate_limit_redis_timeout_seconds: float = Field(default=0.5, gt=0, le=5)
+
+    # --- Python sandbox (sandbox/README.md) ---
+    # Where the API sends Python to run. Docker Compose sets
+    # http://sandbox:8100. Empty: the Python tool answers 503 and research
+    # plans fall back to a fixed plan.
+    sandbox_url: str | None = Field(default=None, pattern=r"^https?://")
+    # The sandbox stops a run after 5 seconds; this covers the round trip.
+    sandbox_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
+    # --- Enterprise data tools (the MCP server, mcp_server/README.md) ---
+    # Where the API's tools agent reaches the MCP server. Docker Compose sets
+    # http://mcp:8200/mcp. Empty: enterprise-data questions are answered
+    # from the documents, and the answer says the tools were unavailable.
+    mcp_url: str | None = Field(default=None, pattern=r"^https?://")
+    mcp_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
     # --- LangSmith tracing ---
     # Off unless switched on and a key is set. The app works the same
@@ -163,6 +280,8 @@ class Settings(BaseSettings):
         "langsmith_api_key",
         "gemini_model",
         "openrouter_model",
+        "sandbox_url",
+        "mcp_url",
         mode="before",
     )
     @classmethod
@@ -204,6 +323,12 @@ class Settings(BaseSettings):
             for name, key, model in self._llm_settings()
             if key is not None and model is not None
         ]
+
+    @property
+    def jwks_url(self) -> str:
+        """Keycloak's public signing keys for the realm (a JWKS document)."""
+        base = self.keycloak_url.rstrip("/")
+        return f"{base}/realms/{self.keycloak_realm}/protocol/openid-connect/certs"
 
     @property
     def is_production(self) -> bool:

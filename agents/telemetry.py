@@ -6,7 +6,7 @@ take a few fixed values (node names, providers, answer kinds), never user
 input, so the number of series stays small.
 """
 
-from prometheus_client import CollectorRegistry, Counter, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
 from agents.state import AgentName, AnswerKind, ErrorKind
 
@@ -57,10 +57,43 @@ class AgentMetrics:
             ["provider", "direction"],
             registry=registry,
         )
+        self.llm_breaker_state = Gauge(
+            "llm_breaker_state",
+            "Circuit breaker per provider: 0 closed (in use), 1 half-open (probing), "
+            "2 open (skipped).",
+            ["provider"],
+            registry=registry,
+        )
         self.llm_fallbacks = Counter(
             "llm_fallbacks_total",
             "Calls answered by a later provider because an earlier one failed.",
             ["provider"],
+            registry=registry,
+        )
+        # Guardrails (security/guardrails): what was blocked, dropped or fixed.
+        self.guardrail_blocks = Counter(
+            "guardrail_blocks_total",
+            "Questions refused, retrieved chunks dropped and answers rejected by a guardrail, "
+            "by where (input, retrieved, output) and why.",
+            ["guard", "category"],
+            registry=registry,
+        )
+        self.tool_runs = Counter(
+            "tool_runs_total",
+            "Tool runs by tool and outcome (ok, rejected, error, timeout, crashed, unavailable).",
+            ["tool", "status"],
+            registry=registry,
+        )
+        self.feedback = Counter(
+            "answer_feedback_total",
+            "Thumbs up and down on answers.",
+            ["score"],
+            registry=registry,
+        )
+        self.pii_masked = Counter(
+            "pii_masked_total",
+            "Personal or secret values masked in answers, by kind.",
+            ["kind"],
             registry=registry,
         )
 

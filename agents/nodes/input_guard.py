@@ -10,9 +10,14 @@ It does two jobs:
   are removed. A question that fails is answered with a short refusal and
   no model is called.
 
-The prompt-injection scan (LLM Guard and rules) is added here in
-`feature/guardrails`. Until then, the rules in the system prompt and the
-role checks in code are what stop injection attempts (ADR-0007).
+- **Scans for prompt injection.** The question is checked against the
+  injection rules (security/guardrails/injection.py): attempts to override
+  the instructions, reveal them, claim a higher role, send data elsewhere,
+  call tools or fake the prompt's tags. A match is refused before any model
+  sees the question, logged on the security channel and counted. The rules
+  are one layer of several; the role checks in code and the data filters
+  are what keep a missed attempt from reaching anything (ADR-0007,
+  docs/security/PROMPT_INJECTION.md).
 
 If this node itself fails, the question is refused: it fails closed.
 """
@@ -22,8 +27,12 @@ import unicodedata
 from langchain_core.messages import HumanMessage
 
 from agents.nodes.base import AgentNode, StateUpdate
-from agents.state import AgentError, AgentName, AgentState
+from agents.state import AgentError, AgentName, AgentState, Fresh
+from core.logging import SECURITY_LOGGER, get_logger
+from security.guardrails.injection import scan
 from security.roles import Role
+
+security_log = get_logger(SECURITY_LOGGER)
 
 # Longer than this is a pasted document, not a question. It also bounds
 # the prompt size (and so the cost) of one question.
@@ -35,6 +44,10 @@ REFUSAL_TOO_LONG = (
     "or ask about one part at a time."
 )
 REFUSAL_INTERNAL = "I couldn't check your question just now. Please try again."
+REFUSAL_INJECTION = (
+    "I can't help with that request. It looks like an attempt to change how I work or what "
+    "I can access. Please ask a question about the bank's documents."
+)
 
 
 def clean_question(text: str) -> str:
@@ -56,6 +69,11 @@ def _new_question() -> StateUpdate:
         "search_plan": None,
         "search": None,
         "hits": [],
+        "research": None,
+        "findings": [],
+        "memory_saved": [],
+        "tool_results": [],
+        "approval": None,
         "relax_filters": False,
         "retrieval_attempts": 0,
         "draft": None,
@@ -87,6 +105,25 @@ class InputGuard(AgentNode):
             reason = REFUSAL_EMPTY
         elif len(question) > MAX_QUESTION_CHARS:
             reason = REFUSAL_TOO_LONG
+        elif (finding := scan(question)).flagged:
+            reason = REFUSAL_INJECTION
+            for category in finding.categories:
+                self.context.metrics.guardrail_blocks.labels(
+                    guard="input", category=category.value
+                ).inc()
+            # The question itself is never logged; the categories say enough.
+            security_log.warning(
+                "prompt_injection_blocked",
+                categories=[c.value for c in finding.categories],
+                role=state["role"].value,
+            )
+            update["steps"] = Fresh(
+                [
+                    self.step(
+                        f"The question looks like a prompt-injection attempt ({finding.summary})."
+                    )
+                ]
+            )
         else:
             update["question"] = question
             return update

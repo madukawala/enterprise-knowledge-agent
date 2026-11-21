@@ -21,6 +21,17 @@ The assignment asks the system to remember user context, previous questions and 
 - **PII is masked with Presidio** before anything goes into long-term memory.
 - Retention is configurable (default 30 days) and enforced by an admin clean-up task.
 
+## Changes during implementation (`feature/memory`)
+
+- **The memory writer decides in code, not with a model call.** An answered question is saved as one masked line with the documents it cited; refusals, small talk and failed answers are not. The departments the user searched are counted into the profile. This costs no model quota and is easy to test. "Preferred level of detail" is not tracked.
+- **Recall is by shared words**, not similarity search. The store holds one-line items per user; the ones sharing at least two words with the new question are recalled (up to three), with the profile. No embedding model or index is needed.
+- **Keyed by the pseudonym** (`u_...`), not the user ID, like every other per-user record (rate limits, logs, traces).
+- **Masking uses core/pii.py**, not Presidio (ADR-0016).
+- **Thread owners are kept in the same store** (namespace `("threads",)`), with each thread's title and dates. Owners kept only in memory would let anyone claim a thread after a restart, now that the conversations themselves survive it. This also gives `GET /threads`.
+- **The summary** is written by one model call when a thread has more than 12 messages and at least four new ones since the last summary; the newest six messages always stay in full.
+- **Retention** is an admin endpoint (`POST /admin/memory/cleanup`, permission `admin_memory_cleanup`) rather than a scheduled task; a scheduler can call it.
+- Users see and clear their own memory with `GET /me/memory` and `DELETE /me/memory`, and delete a conversation with `DELETE /threads/{id}`.
+
 ## Consequences
 
 - **Positive:** one database for checkpoints, memory, feedback and the audit log; LangGraph supports both natively; threads survive API restarts.
