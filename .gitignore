@@ -1,0 +1,147 @@
+# ---------------------------------------------------------------
+# Secrets and local settings
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments (uv creates .venv)
+.venv/
+venv/
+env/
+
+# ---------------------------------------------------------------
+# Tool caches
+# ---------------------------------------------------------------
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+.import_linter_cache/
+.dmypy.json
+dmypy.json
+.ipynb_checkpoints/
+# Scratch output from make targets (for example the pip-audit requirements export)
+.cache/
+requirements-audit.txt
+
+# ---------------------------------------------------------------
+# Test, coverage and evaluation output
+# ---------------------------------------------------------------
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+reports/
+test-results/
+playwright-report/
+locust-report*.html
+
+# ---------------------------------------------------------------
+# Generated data
+# ---------------------------------------------------------------
+# Ingestion output (fitted BM25 parameters, document catalog);
+# rebuilt with `make ingest`
+data/index/
+# Temporary files left if a save is interrupted (ingestion writes to a
+# temporary file first, then renames it)
+*.tmp
+# Your own question sets for `python -m evals.retrieval --dataset ...`.
+# The shared set (evals/datasets/retrieval.yaml) and the report from
+# `make eval-retrieval` (docs/evals/retrieval.md) are committed.
+evals/datasets/*.local.yaml
+# Local state of the LangGraph dev server (`langgraph dev`), if you use it
+# to look at the agent graph
+.langgraph_api/
+# Local Docker volume data, if bind-mounted
+.docker-data/
+# Logs
+logs/
+*.log
+
+# ---------------------------------------------------------------
+# Editors and operating systems
+# ---------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# draw.io backup and lock files
+*.drawio.bkp
+*.drawio.dtmp
+.$*
+
+# ---------------------------------------------------------------
+# Docker Compose local overrides
+# ---------------------------------------------------------------
+docker-compose.override.yml
+compose.override.yaml
+# Trivy output when the scan is run by hand
+trivy-results.*
+.trivycache/
+
+# ---------------------------------------------------------------
+# API testing by hand
+# ---------------------------------------------------------------
+# Browser network captures (HAR) and HTTP-client secret files hold
+# request headers and tokens, so they stay on your machine.
+*.har
+http-client.private.env.json
+*.private.env.json
+
+# ---------------------------------------------------------------
+# Streamlit (chat UI)
+# ---------------------------------------------------------------
+# .streamlit/config.toml is shared on purpose. Secrets and personal
+# credentials files are never committed.
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# ---------------------------------------------------------------
+# Login (Keycloak)
+# ---------------------------------------------------------------
+# Access tokens saved by hand while trying the API (for example the output
+# of `make token`). They are bearer credentials until they expire.
+*.jwt
+token.txt
+tokens.txt
+# Realm exports from the Keycloak admin console can hold user data and
+# client secrets. The shared realm is infra/keycloak/realm-helix.json.
+realm-export*.json
+infra/keycloak/*-export.json
+
+# ---------------------------------------------------------------
+# Language model providers (Claude, Gemini)
+# ---------------------------------------------------------------
+# Usage and cost exports downloaded from the Anthropic Console or Google
+# AI Studio show the account's spend and key names. Keep them local.
+anthropic-usage*.csv
+anthropic-cost*.csv
+claude_api_cost*.csv
+claude_api_tokens*.csv
+gemini-usage*.csv
+# Request and response dumps saved while debugging a model call can hold
+# whole prompts, including retrieved document text.
+llm-dumps/
+*.llm-dump.json

@@ -1,0 +1,53 @@
+# Keep the build context small and keep secrets out of every image.
+# The Dockerfile copies only what it needs, but anything listed here is
+# never even sent to Docker.
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Git and editor files
+.git
+.github
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Python environments and caches
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.cache
+.ruff_cache
+.mypy_cache
+.pytest_cache
+.hypothesis
+.import_linter_cache
+
+# Test output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov
+reports
+test-results
+
+# Not needed inside the images
+docs
+tests
+infra
+data/index
+data/sample_docs
+evals
+.docker-data
+*.log
+
+# Streamlit: only config.toml is copied into the UI image
+.streamlit/secrets.toml
+.streamlit/credentials.toml

@@ -1,0 +1,37 @@
+{
+  "_note": "Fictional data for Helix Commercial Bank. No real people, systems or incidents.",
+  "people": [
+    {"id": "E1001", "name": "Priya Raman", "title": "Head of Payments Platform", "team": "Payments Platform", "department": "payments", "location": "London", "email": "priya.raman@helix.example"},
+    {"id": "E1002", "name": "Tomas Varga", "title": "Senior Site Reliability Engineer", "team": "Site Reliability", "department": "payments", "location": "Leeds", "email": "tomas.varga@helix.example"},
+    {"id": "E1003", "name": "Grace Okafor", "title": "PayHub Service Owner", "team": "Payments Platform", "department": "payments", "location": "London", "email": "grace.okafor@helix.example"},
+    {"id": "E1004", "name": "Daniel Hughes", "title": "Cards Platform Lead", "team": "Cards Platform", "department": "cards", "location": "Edinburgh", "email": "daniel.hughes@helix.example"},
+    {"id": "E1005", "name": "Mei Lin", "title": "CardSwitch Service Owner", "team": "Cards Platform", "department": "cards", "location": "Edinburgh", "email": "mei.lin@helix.example"},
+    {"id": "E1006", "name": "Samuel Adeyemi", "title": "Instant Payments Engineer", "team": "Payments Platform", "department": "payments", "location": "London", "email": "samuel.adeyemi@helix.example"},
+    {"id": "E1007", "name": "Hannah Kowalski", "title": "Core Banking Manager", "team": "Core Banking", "department": "core-banking", "location": "Leeds", "email": "hannah.kowalski@helix.example"},
+    {"id": "E1008", "name": "Oliver Brandt", "title": "Network Engineering Lead", "team": "Network Engineering", "department": "security", "location": "London", "email": "oliver.brandt@helix.example"},
+    {"id": "E1009", "name": "Aisha Rahman", "title": "Incident Manager", "team": "Site Reliability", "department": "payments", "location": "Leeds", "email": "aisha.rahman@helix.example"},
+    {"id": "E1010", "name": "Lucas Moreau", "title": "Security Operations Lead", "team": "Security Operations", "department": "security", "location": "London", "email": "lucas.moreau@helix.example"},
+    {"id": "E1011", "name": "Fatima Noor", "title": "HR Systems Manager", "team": "HR Systems", "department": "hr", "location": "Leeds", "email": "fatima.noor@helix.example"},
+    {"id": "E1012", "name": "Ben Carter", "title": "Edge Gateway Engineer", "team": "Network Engineering", "department": "security", "location": "Edinburgh", "email": "ben.carter@helix.example"}
+  ],
+  "services": [
+    {"name": "PayHub", "description": "Payment initiation and bulk payment processing", "owner_team": "Payments Platform", "service_owner": "E1003", "on_call": "E1002", "tier": 1, "department": "payments"},
+    {"name": "IPG", "description": "Instant Payments Gateway to the FastLane scheme", "owner_team": "Payments Platform", "service_owner": "E1006", "on_call": "E1002", "tier": 1, "department": "payments"},
+    {"name": "CardSwitch", "description": "Card authorisation switch", "owner_team": "Cards Platform", "service_owner": "E1005", "on_call": "E1004", "tier": 1, "department": "cards"},
+    {"name": "Network Gateway", "description": "Connections to card schemes and payment networks", "owner_team": "Network Engineering", "service_owner": "E1008", "on_call": "E1012", "tier": 1, "department": "security"},
+    {"name": "Edge Gateway", "description": "Public API and online banking entry point", "owner_team": "Network Engineering", "service_owner": "E1012", "on_call": "E1008", "tier": 1, "department": "security"},
+    {"name": "Status Service", "description": "Payment status tracking for customers and staff", "owner_team": "Payments Platform", "service_owner": "E1003", "on_call": "E1009", "tier": 2, "department": "payments"},
+    {"name": "Core Ledger", "description": "Account balances and postings", "owner_team": "Core Banking", "service_owner": "E1007", "on_call": "E1007", "tier": 1, "department": "core-banking"},
+    {"name": "HR Portal", "description": "Leave, payroll records and staff self-service", "owner_team": "HR Systems", "service_owner": "E1011", "on_call": "E1011", "tier": 3, "department": "hr"}
+  ],
+  "incidents": [
+    {"id": "INC-2026-041", "title": "PayHub submission latency above target", "service": "PayHub", "severity": "SEV3", "status": "open", "opened": "2026-11-18", "assignee": "E1002", "summary": "Bulk file submissions take up to 40 s at 09:00. Under investigation."},
+    {"id": "INC-2026-040", "title": "IPG certificate renewal reminder", "service": "IPG", "severity": "SEV4", "status": "monitoring", "opened": "2026-11-12", "assignee": "E1006", "summary": "Scheme certificate expires on 2027-01-15. Renewal scheduled."},
+    {"id": "INC-2026-039", "title": "CardSwitch declines spike at Edinburgh site", "service": "CardSwitch", "severity": "SEV2", "status": "resolved", "opened": "2026-11-02", "resolved": "2026-11-02", "assignee": "E1005", "summary": "A config push raised declines for 25 minutes. Rolled back."},
+    {"id": "INC-2026-038", "title": "Status Service shows stale payment status", "service": "Status Service", "severity": "SEV3", "status": "resolved", "opened": "2026-10-21", "resolved": "2026-10-22", "assignee": "E1009", "summary": "Event consumer lag after a broker restart."},
+    {"id": "INC-2026-037", "title": "Edge Gateway rate limiting misfired for one partner", "service": "Edge Gateway", "severity": "SEV3", "status": "monitoring", "opened": "2026-10-30", "assignee": "E1012", "summary": "Partner traffic was throttled at a lower limit than agreed. Limit corrected; watching for a week."},
+    {"id": "INC-2026-036", "title": "Core Ledger end-of-day batch overran", "service": "Core Ledger", "severity": "SEV2", "status": "resolved", "opened": "2026-10-01", "resolved": "2026-10-01", "assignee": "E1007", "summary": "Batch finished 70 minutes late; no customer impact."},
+    {"id": "INC-2026-035", "title": "Network Gateway packet loss to card scheme", "service": "Network Gateway", "severity": "SEV2", "status": "resolved", "opened": "2026-09-14", "resolved": "2026-09-14", "assignee": "E1008", "summary": "Carrier link fault; traffic moved to the second link."},
+    {"id": "INC-2026-034", "title": "HR Portal login failures", "service": "HR Portal", "severity": "SEV4", "status": "open", "opened": "2026-11-19", "assignee": "E1011", "summary": "Some staff cannot sign in after a password change. Workaround: clear the browser cache."}
+  ]
+}

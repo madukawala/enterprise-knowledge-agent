@@ -1,0 +1,37 @@
+# Development override: the API and the UI run your local code and reload
+# when you save a file, so there is no rebuild after each change.
+#
+#   make up-dev
+#   (or: docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait)
+#
+# The source folders are mounted read-only. PYTHONPATH puts them ahead of the
+# copy installed in the image. New dependencies still need a rebuild.
+
+services:
+  api:
+    environment:
+      PYTHONPATH: /app
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./api:/app/api:ro
+      - ./core:/app/core:ro
+      - ./security:/app/security:ro
+      - ./rag:/app/rag:ro
+      - ./agents:/app/agents:ro
+    command:
+      - uvicorn
+      - api.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app
+
+  ui:
+    environment:
+      # Streamlit reruns the page when a file in ui/ changes.
+      STREAMLIT_SERVER_RUN_ON_SAVE: "true"
+    volumes:
+      - ./ui:/app/ui:ro

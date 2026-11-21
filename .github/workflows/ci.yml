@@ -1,0 +1,142 @@
+# Runs on every pull request and on pushes to develop and main.
+# A branch is merged only when every job here is green.
+#
+# Order: lint -> type check -> import boundaries -> tests with coverage,
+# with the security checks, the Compose check and the image scan running
+# alongside.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, types and import boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+      - name: Formatting
+        run: uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Import boundaries (the UI must not import backend code)
+        run: uv run lint-imports
+
+  test:
+    name: Tests and coverage
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Run tests with the coverage gate
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  security:
+    name: Security checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Security lint (bandit)
+        run: uv run bandit -q -c pyproject.toml -r api core security rag ingestion agents evals ui sandbox mcp_server
+      - name: Known vulnerabilities in dependencies (pip-audit)
+        run: |
+          uv export --frozen --all-groups --no-emit-project --format requirements-txt \
+            -o "$RUNNER_TEMP/requirements-audit.txt" -q
+          uv run pip-audit --strict --disable-pip -r "$RUNNER_TEMP/requirements-audit.txt"
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Compose check and image scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the Compose files
+        # .env.example has a value for every variable compose.yaml needs.
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose --profile observability config --quiet
+          docker compose -f compose.yaml -f compose.dev.yaml config --quiet
+      - name: Build the API, UI and sandbox images
+        run: |
+          docker build --target api -t enterprise-knowledge-agent/api:ci .
+          docker build --target ui -t enterprise-knowledge-agent/ui:ci .
+          docker build -t enterprise-knowledge-agent/sandbox:ci sandbox
+      - name: Scan the API image for known vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: trivy-secret.yaml
+        with:
+          image-ref: enterprise-knowledge-agent/api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the UI image for known vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: trivy-secret.yaml
+        with:
+          image-ref: enterprise-knowledge-agent/ui:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the sandbox image for known vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: trivy-secret.yaml
+        with:
+          image-ref: enterprise-knowledge-agent/sandbox:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the Dockerfile for risky settings (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
