@@ -82,7 +82,7 @@ def test_empty_keys_count_as_not_set() -> None:
 def test_model_names_have_no_default() -> None:
     settings = Settings(_env_file=None)
     assert (settings.claude_model, settings.gemini_model) == (None, None)
-    assert settings.llm_providers() == []
+    assert settings.active_llm_providers() == []
 
 
 @pytest.mark.parametrize(
@@ -117,7 +117,7 @@ def test_every_missing_model_is_reported_at_once() -> None:
 
 def test_a_model_without_its_key_is_allowed_and_unused() -> None:
     settings = Settings(_env_file=None, claude_model="claude-model")
-    assert settings.llm_providers() == []
+    assert settings.active_llm_providers() == []
 
 
 def test_providers_with_key_and_model_are_listed_in_failover_order() -> None:
@@ -128,10 +128,40 @@ def test_providers_with_key_and_model_are_listed_in_failover_order() -> None:
         anthropic_api_key="a",  # type: ignore[arg-type]
         claude_model="claude-model",
     )
-    assert [(name, model) for name, _key, model in settings.llm_providers()] == [
+    assert [(name, model) for name, _key, model in settings.active_llm_providers()] == [
         ("anthropic", "claude-model"),
         ("gemini", "gemini-model"),
     ]
+
+
+def _both_providers(**values: object) -> Settings:
+    return Settings(
+        _env_file=None,
+        anthropic_api_key="a",  # type: ignore[arg-type]
+        claude_model="claude-model",
+        gemini_api_key="g",  # type: ignore[arg-type]
+        gemini_model="gemini-model",
+        **values,  # type: ignore[arg-type]
+    )
+
+
+def test_the_provider_order_is_a_setting() -> None:
+    settings = _both_providers(llm_providers=" Gemini , anthropic ")
+    assert [name for name, _key, _model in settings.active_llm_providers()] == [
+        "gemini",
+        "anthropic",
+    ]
+
+
+def test_a_provider_left_out_of_the_order_is_not_used() -> None:
+    settings = _both_providers(llm_providers="gemini")
+    assert [name for name, _key, _model in settings.active_llm_providers()] == ["gemini"]
+
+
+@pytest.mark.parametrize("order", ["openai,gemini", "gemini,gemini", "", " , "])
+def test_a_wrong_provider_order_stops_startup_with_a_clear_message(order: str) -> None:
+    with pytest.raises(ValidationError, match="LLM_PROVIDERS must list each of anthropic, gemini"):
+        _both_providers(llm_providers=order)
 
 
 def test_the_signing_keys_url_is_built_from_keycloak_and_the_realm() -> None:

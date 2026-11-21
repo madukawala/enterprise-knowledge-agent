@@ -27,7 +27,7 @@ This is the graph built today. [docs/architecture/03-agent-graph.generated.md](.
 | [nodes/response.py](nodes/response.py) | Writes the answer with citations, in the bank's voice |
 | [nodes/validator.py](nodes/validator.py) | Checks the citations and the answer's shape, then finishes the answer |
 | [nodes/base.py](nodes/base.py) | What every node shares: dependencies, timing and failure containment |
-| [llm.py](llm.py) | The model gateway: Claude first, then Gemini if Claude fails, with a time limit on every call. Claude is set up for low cost |
+| [llm.py](llm.py) | The model gateway: Claude first, then Gemini if Claude fails (order set by `LLM_PROVIDERS`), with a time limit on every call. Claude is set up for low cost |
 | [context.py](context.py) and [prompts/](prompts/) | The prompts. Rules go in the system message; documents and the conversation go in tagged blocks |
 | [service.py](service.py) | `AgentService.stream()`: runs one question and yields its events as they happen; `ask()` runs it to the end and returns the answer and what happened |
 | [events.py](events.py) | The live events of a run (node started, search done, token, final answer, ...), as the activity panel gets them |
@@ -116,7 +116,7 @@ One failing agent never breaks the run. Each node writes its failure to its own 
 
 ## Language models
 
-[llm.py](llm.py) gives the agents two calls: `structured(schema, ...)` for a filled-in Pydantic model, and `text(...)` for a reply. For each call it tries the providers in order: Claude, then Gemini. Only providers with a key are used.
+[llm.py](llm.py) gives the agents two calls: `structured(schema, ...)` for a filled-in Pydantic model, and `text(...)` for a reply. For each call it tries the providers in the order of `LLM_PROVIDERS` (default `anthropic,gemini`: Claude, then Gemini). Only providers in that list that have a key are used. Setting `LLM_PROVIDERS=gemini,anthropic` puts Gemini first; a single name uses only that model.
 
 Each provider's model is chosen in `.env` (`CLAUDE_MODEL`, `GEMINI_MODEL`), and the code has no default. Models are renamed and retired often, and a name kept in code would go stale without anyone noticing. A key without its model stops the app at startup with a message naming the missing setting. `.env.example` lists the recommended models: `claude-haiku-5-5` and `gemini-3.6-flash`.
 
@@ -182,7 +182,7 @@ Saved checkpoints are read back with an explicit list of allowed types ([checkpo
 
 ## Observability
 
-- **Logs.** `supervisor_planned`, `llm_call_failed` (provider, outcome and error type only, because provider messages can echo the prompt), `llm_fallback_used`, `answer_rejected`, `agent_node_failed` (with the traceback) and one `agent_run_finished` per question. The question text is never logged.
+- **Logs.** `supervisor_planned`, `llm_call` (one line per answered model call: provider, model, purpose, input, cached input and output tokens, time, and whether the backup model answered), `llm_call_failed` (provider, outcome and error type only, because provider messages can echo the prompt), `llm_fallback_used`, `answer_rejected`, `agent_node_failed` (with the traceback) and one `agent_run_finished` per question. The question text is never logged.
 - **Metrics** ([telemetry.py](telemetry.py)), on a registry the caller passes in: `agent_runs_total{answer_kind}`, `agent_run_duration_seconds`, `agent_node_duration_seconds{node}`, `agent_node_errors_total{node,kind}`, `agent_answer_validations_total{result}`, `llm_calls_total{provider,purpose,outcome}`, `llm_tokens_total{provider,direction}` and `llm_fallbacks_total{provider}`. The API registers them on its `/metrics` endpoint.
 - **LangSmith.** Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. Each question becomes one trace in `LANGSMITH_PROJECT`, with every node, model call and search inside it. It is tagged `role:<role>` and carries `request_id` and `thread_id` as metadata. The tracer is passed to each run as a callback with our own client, so only runs started by `AgentService` are traced. The trace ID is the run's `run_id`, which the API sends to the client (`X-Run-ID`); a run the user walked away from shows as cancelled. Until `feature/guardrails` adds masking, traces contain the question as typed, so use tracing with the fictional sample data only.
 

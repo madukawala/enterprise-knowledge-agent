@@ -36,7 +36,7 @@ QUESTION = prompt(
 
 def _providers() -> list[ChatProvider]:
     settings = Settings()
-    if not settings.llm_providers():
+    if not settings.active_llm_providers():
         return []
     return list(build_gateway(settings).providers)
 
@@ -63,7 +63,7 @@ async def test_each_configured_model_writes_plain_text(provider: ChatProvider) -
 
 async def test_a_real_question_is_answered_with_citations() -> None:
     settings = Settings()
-    if not settings.llm_providers():
+    if not settings.active_llm_providers():
         pytest.skip("no model key is set")
     if (
         settings.pinecone_api_key is None

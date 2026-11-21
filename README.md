@@ -286,6 +286,17 @@ make down-volumes    # stop the services and delete all local data
 | Image scan | CI builds the API and UI images and scans them with Trivy. It fails on high or critical vulnerabilities that have a fix, and on risky Dockerfile settings. Run the same scan locally with `make scan-image`. |
 | Monitoring (optional) | `make up-observability` adds Prometheus, which reads `/metrics` from the API, and Grafana with the "Helix Knowledge Assistant" dashboard already loaded: requests and latency, answer time, model calls by provider, the circuit breakers, tokens, rate limits, guardrail blocks, tools, searches and feedback. |
 
+### Demo: model order and failover
+
+Two models are set up: Claude answers first and Gemini takes over when Claude fails. The order is the `LLM_PROVIDERS` setting in `.env`, so it can be changed without touching code. Start the stack with `make up-observability` to see the Grafana panels too. These steps show the order and the backup at work:
+
+1. **Normal run.** Ask a question. In the agent activity panel, the table under "Response" shows `anthropic / claude-haiku-5-5` for every call. `make logs` shows one `llm_call` line per call, with the provider, the model, the tokens (including those read from the prompt cache) and the time.
+2. **Swap the order.** Set `LLM_PROVIDERS=gemini,anthropic` in `.env` and restart the API with `docker compose up -d --wait api` (a plain `docker compose restart` does not read `.env` again). Ask again: the table now shows `gemini / gemini-3.6-flash`.
+3. **The first model fails.** Set the key of the model listed first (for example `GEMINI_API_KEY`) to a wrong value and restart the API the same way. Ask again. The activity panel says "The main model did not answer, so anthropic / claude-haiku-5-5 was used", the table marks those calls "backup model: yes", and the logs show `llm_call_failed` followed by `llm_call` with `"fallback": true`. In Grafana, "Fallbacks to the backup model" goes up, and after five failures within a minute "Circuit breaker per provider" shows the failing model as open (2). From then on the failing model is skipped, so answers come straight from the backup without waiting.
+4. **Put it back.** Restore the key, set `LLM_PROVIDERS=anthropic,gemini` and restart the API.
+
+Every failure the system plans for, and how to show the others live, is in [07-failure-handling.md](docs/architecture/07-failure-handling.md).
+
 ## Development
 
 You need Python 3.12 and [uv](https://docs.astral.sh/uv/). uv downloads Python 3.12 itself if it is missing, so the default `python3` on your machine does not matter.

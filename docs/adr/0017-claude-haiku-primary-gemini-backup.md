@@ -20,6 +20,7 @@ The assistant still needs to call tools and return structured output reliably, s
 - **Backup: Google Gemini, `gemini-3.6-flash`, on its free tier.** A different company, so an Anthropic outage or rate limit does not stop the assistant. The circuit breaker, time limits and failover from ADR-0002 are unchanged.
 - **OpenRouter is removed.** Two providers from two companies already give real failover, and a third free provider with a 50-requests-a-day limit added code and settings but little safety. No local model is used (unchanged from ADR-0001).
 - **Model names stay in `.env` only** (`CLAUDE_MODEL`, `GEMINI_MODEL`), with no default in code.
+- **The order is a setting** (`LLM_PROVIDERS`, default `anthropic,gemini`). It can put Gemini first or use only one model, with a restart and no code change.
 - **Claude is set up to spend as little as possible** ([agents/llm.py](../../agents/llm.py)):
 
 | Setting | What it does | Why |
@@ -47,6 +48,8 @@ The existing limits keep the total small as well: three model calls for a normal
 
 - The Anthropic client needs `brotlicffi` 1.2 or newer. With 1.1, every non-streamed call failed with a misleading "connection error", although the API had answered. The version is pinned in `pyproject.toml`.
 - The new settings are called `ANTHROPIC_MAX_TOKENS` and `ANTHROPIC_EFFORT`, not `CLAUDE_...`, because some developer tools already set environment variables starting with `CLAUDE_`, which would silently override `.env`.
+- **Provider order as a setting (added later).** `LLM_PROVIDERS` sets the order the models are tried in. A name that is not a known provider, or a name listed twice, stops the app at startup with a message. A provider left out is not used, even with a key. The default stays Claude first: Claude is paid but has no daily limit, while Gemini's free tier ran out within one day of testing, so a Gemini-first setup would move to Claude at unplanned moments. The demo swaps the order and then breaks the first model's key on purpose, so the failover is shown on cue (README, "Demo: model order and failover").
+- **One log line per model call (added later).** `llm_call` names the provider, model, purpose, tokens (including those read from the prompt cache), time and whether the backup answered, so the logs alone show which model handled each step. No prompt or answer text is logged.
 - With thinking left on, Claude often chose not to think on the short supervisor call anyway. Turning it off makes sure no thinking tokens are spent on the longer calls (answers and research) either.
 
 ## Alternatives considered

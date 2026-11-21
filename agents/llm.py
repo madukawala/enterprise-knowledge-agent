@@ -209,6 +209,19 @@ class LLMGateway:
                 )
                 if record.fallback:
                     self.metrics.llm_fallbacks.labels(provider=provider.name).inc()
+            # One line per answered call, so the logs alone show which model
+            # handled each step and what it used. No prompt or answer text.
+            log.info(
+                "llm_call",
+                provider=record.provider,
+                model=record.model,
+                purpose=purpose,
+                input_tokens=record.input_tokens,
+                cached_input_tokens=_cached_tokens(raw),
+                output_tokens=record.output_tokens,
+                duration_ms=record.duration_ms,
+                fallback=record.fallback,
+            )
             if record.fallback:
                 log.warning("llm_fallback_used", provider=provider.name, purpose=purpose)
             return result, record
@@ -236,23 +249,32 @@ def _record(
     )
 
 
+def _cached_tokens(raw: AIMessage) -> int:
+    """Input tokens read from the prompt cache (Claude only; 0 otherwise)."""
+    usage: Mapping[str, Any] = raw.usage_metadata or {}
+    details: Mapping[str, Any] = usage.get("input_token_details") or {}
+    return int(details.get("cache_read") or 0)
+
+
 class LLMSetupError(Exception):
     """No language model is configured. The message says what to do."""
 
 
 def build_gateway(settings: Settings, *, metrics: AgentMetrics | None = None) -> LLMGateway:
-    """Create the providers that have a key, in failover order.
+    """Create the providers that have a key, in the order of LLM_PROVIDERS.
 
     The model names come from `.env`; the settings already refuse a key
     without its model (core/config.py).
     """
     providers = [
-        _provider(name, key, model, settings) for name, key, model in settings.llm_providers()
+        _provider(name, key, model, settings)
+        for name, key, model in settings.active_llm_providers()
     ]
     if not providers:
         raise LLMSetupError(
             "No language model is configured. Add ANTHROPIC_API_KEY and CLAUDE_MODEL to .env, "
-            "and ideally GEMINI_API_KEY and GEMINI_MODEL as the backup (see .env.example)."
+            "and ideally GEMINI_API_KEY and GEMINI_MODEL as the backup (see .env.example). "
+            f"Only the providers in LLM_PROVIDERS ({settings.llm_providers}) are used."
         )
     if len(providers) == 1:
         log.warning("llm_no_fallback", provider=providers[0].name)
