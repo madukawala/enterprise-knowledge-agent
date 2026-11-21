@@ -37,4 +37,4 @@ docker compose stop keycloak    # signed-in users carry on with the cached keys
 docker compose start sandbox redis keycloak
 ```
 
-To see the model failover, set `ANTHROPIC_API_KEY` to a wrong value in `.env` and restart the API: every answer comes from Gemini, the activity panel says so, and after five failures in a minute `llm_breaker_state{provider="anthropic"}` on `/metrics` shows the breaker open.
+To see the model failover, set `ANTHROPIC_API_KEY` to a wrong value in `.env` and restart the API with `docker compose up -d --wait api`: every answer comes from Gemini, the activity panel says so, each call's `llm_call` log line has `"fallback": true`, and after five failures in a minute `llm_breaker_state{provider="anthropic"}` on `/metrics` shows the breaker open. With `LLM_PROVIDERS=gemini,anthropic` the same works the other way round. The README's "Demo: model order and failover" has the full sequence.

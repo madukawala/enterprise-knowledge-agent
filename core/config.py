@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     anthropic_effort: Literal["low", "medium", "high"] = "low"
     gemini_api_key: SecretStr | None = None
     gemini_model: str | None = None
+    # The order the providers are tried in, comma-separated. The first one
+    # answers; the next takes over when it fails, times out or is rate
+    # limited. A provider left out of the list is not used, even with a key.
+    # Changing the order needs only a restart, no code change.
+    llm_providers: str = "anthropic,gemini"
     # Gemini only. Low, so routing and answers stay close to the sources.
     # Claude is left at its own default, because the current Claude models
     # refuse any other temperature.
@@ -306,6 +311,18 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("llm_providers")
+    @classmethod
+    def _known_providers_once_each(cls, value: str) -> str:
+        names = [name.strip().lower() for name in value.split(",") if name.strip()]
+        unknown = [name for name in names if name not in _LLM_VARIABLES]
+        if unknown or not names or len(set(names)) != len(names):
+            raise ValueError(
+                f"LLM_PROVIDERS must list each of {', '.join(_LLM_VARIABLES)} at most once, "
+                f"comma-separated, in the order to try them (got {value!r})"
+            )
+        return ",".join(names)
+
     @model_validator(mode="after")
     def _every_provider_has_a_model(self) -> Self:
         """A provider with a key must have its model set too.
@@ -324,20 +341,24 @@ class Settings(BaseSettings):
         return self
 
     def _llm_settings(self) -> list[tuple[str, SecretStr | None, str | None]]:
-        # The order here is the failover order.
+        # Every provider, whether it is used or not.
         return [
             ("anthropic", self.anthropic_api_key, self.claude_model),
             ("gemini", self.gemini_api_key, self.gemini_model),
         ]
 
-    def llm_providers(self) -> list[tuple[str, SecretStr, str]]:
-        """The language model providers that have a key, in failover order:
-        (name, key, model)."""
-        return [
-            (name, key, model)
-            for name, key, model in self._llm_settings()
-            if key is not None and model is not None
-        ]
+    def active_llm_providers(self) -> list[tuple[str, SecretStr, str]]:
+        """The providers to use, in the order of LLM_PROVIDERS: (name, key, model).
+
+        A provider is used when it is in LLM_PROVIDERS and has a key.
+        """
+        by_name = {name: (key, model) for name, key, model in self._llm_settings()}
+        active = []
+        for name in self.llm_providers.split(","):
+            key, model = by_name[name]
+            if key is not None and model is not None:
+                active.append((name, key, model))
+        return active
 
     @property
     def jwks_url(self) -> str:
