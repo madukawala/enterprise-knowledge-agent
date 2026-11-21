@@ -41,6 +41,7 @@ The project is built step by step, one feature branch at a time, following the p
 - [Development](#development)
 - [Running the tests](#running-the-tests)
 - [Documentation](#documentation)
+- [Evidence for reviewers](#evidence-for-reviewers)
 - [Roadmap](#roadmap)
 
 ## What the assistant does
@@ -391,6 +392,43 @@ The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 | [docs/security/PROMPT_INJECTION.md](docs/security/PROMPT_INJECTION.md) | How prompt injection is defended against, layer by layer |
 | [docs/TESTING.md](docs/TESTING.md) | Testing strategy, test layers and CI checks |
 | [docs/evals](docs/evals/README.md) | Evaluation results, starting with retrieval |
+
+## Evidence for reviewers
+
+### LangSmith traces
+
+These are public, read-only links to traces from the running stack, taken on 2026-11-21. They open without a LangSmith account. Each trace shows the full tree of agent steps, the searches with their filters and results, the model calls with tokens and timing, and any tool calls.
+
+| Trace | Role | What to look at |
+|---|---|---|
+| [Document question](https://smith.langchain.com/public/32baa61c-8919-4fa6-8e87-ec4980f40601/r) | Viewer | Agent transitions, the search with the viewer's access filter, and the citations checked by the validator |
+| [Research paused for approval](https://smith.langchain.com/public/5844ef8b-fa90-40c3-a4a7-4ecedfc70411/r) | Analyst | The assignment's outage question stopping at the LangGraph `interrupt` before any research runs |
+| [Research resumed after approval](https://smith.langchain.com/public/a6d1f38f-3d34-4889-9012-d47c91270205/r) | Analyst | The same run resumed from the checkpoint: the collections explored, the Python search plan run in the sandbox, the batch sub-agents and the combined answer with recurring root causes |
+| [Blocked prompt injection](https://smith.langchain.com/public/45631916-6cbf-438c-8dfb-d09992f9bbdf/r) | Viewer | Refused by the input guard, with no model call and no search |
+| [MCP tools](https://smith.langchain.com/public/465a4f1d-ef8e-4016-aec0-11ad43b867e7/r) | Analyst | The tools agent calling the service catalog and the employee directory over MCP. Staff e-mail addresses in the tool results show as `[EMAIL]` |
+| [Backup model taking over](https://smith.langchain.com/public/8d8b31d7-eec0-481d-8f4e-924d0b27a591/r) | Analyst | Asked with a wrong Claude key on purpose. Every Claude call is refused and Gemini takes over the search plan (`fallback=True`). Gemini then timed out on the later steps, so the run ends in the reduced mode: the most relevant sources, with a note that no model could write the answer |
+| [Evaluation scores](https://smith.langchain.com/public/c118fe26-1bbc-4251-83f5-f8564d8bbdcb/r) | Viewer | A question from `make eval-answers --langsmith`; its scores (`eval_kind_correct`, `eval_citation_recall`, `eval_mentions`, `eval_grounded`) are attached to the trace as feedback |
+
+How to read them:
+
+- Each trace's metadata carries the role, the request ID, the thread ID and the user as a pseudonym, never the username.
+- Personal data is masked before a trace leaves the machine: e-mail addresses, phone numbers, card numbers and keys show as `[EMAIL]`, `[PHONE]` and so on, in every step. Names are not masked, which is why tracing is used with the fictional sample data only.
+- Scores and user feedback are not visible on a public link. The latest evaluation run, with every score, is written up in [docs/evals/answers.md](docs/evals/answers.md) (Run 4).
+
+To see your own traces, set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in `.env`. Every question then appears in the LangSmith project `helix-knowledge-agent`.
+
+### Pinecone
+
+The index can be rebuilt with a free Pinecone key: add it to `.env` and run `make ingest`. This creates the index `helix-knowledge` with one namespace per collection (`policies`, `architecture`, `runbooks`, `incidents`, `product-specs`, `meeting-notes`). Each record holds dense and sparse values and its metadata (`doc_id`, `title`, `section`, `department`, `document_type`, `access_level`, `created_date`).
+
+To see the access filter at work, run the same search as two roles:
+
+```bash
+make search Q="salary-day payment failures" ROLE=viewer
+make search Q="salary-day payment failures" ROLE=analyst
+```
+
+The viewer's results are all `internal`. The analyst's top results are the `confidential` incident report INC-2026-003 and its post-incident review. Each row shows the hybrid score, the re-rank score, the access level, and the document and section it came from. Search quality is measured in [docs/evals/retrieval.md](docs/evals/retrieval.md).
 
 ## Roadmap
 
