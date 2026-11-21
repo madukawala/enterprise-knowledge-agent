@@ -32,7 +32,7 @@ The latest results are in [docs/evals/answers.md](../docs/evals/answers.md).
 
 **Why not Ragas.** Ragas needs several model calls per question for each metric, and its embeddings model, which would multiply the cost of every evaluation run. These measures are simple and cheap, and the grounding judge covers faithfulness when it is wanted.
 
-**With LangSmith** (`--langsmith`, and `LANGSMITH_TRACING=true` with a key): every score is attached to the question's trace as feedback (`eval_kind_correct`, `eval_citation_recall`, `eval_mentions`, `eval_grounded`), next to the users' own thumbs up and down (`user_score`), so quality can be followed over time in one place.
+**With LangSmith** (`--langsmith`, and `LANGSMITH_TRACING=true` with a key): every score is attached to the question's trace as feedback (`eval_kind_correct`, `eval_citation_recall`, `eval_mentions`, `eval_grounded`), next to the users' own thumbs up and down (`user_score`), so quality can be followed over time in one place. Each score is sent with the project's ID, as the LangSmith SDK asks.
 
 **Cost:** about 3 model calls per question, one more with `--judge`. With `claude-haiku-5-5` a run of the 8 cases costs about one US cent. If Claude fails or is rate limited, some calls move to Gemini; the report says which models ran.
 
