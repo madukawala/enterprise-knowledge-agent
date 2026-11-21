@@ -290,7 +290,7 @@ def main() -> None:
     configure_logging("WARNING", settings.log_format)
     cases = [c for c in load_cases(args.dataset) if not args.only or c.id == args.only]
     scores = asyncio.run(run_cases(cases, use_judge=args.judge))
-    model = ", ".join(f"{name} {model}" for name, _, model in settings.llm_providers())
+    model = ", ".join(f"{name} {model}" for name, _, model in settings.active_llm_providers())
     text = report(scores, model=model)
     REPORT.write_text(text, encoding="utf-8")
     print(text)

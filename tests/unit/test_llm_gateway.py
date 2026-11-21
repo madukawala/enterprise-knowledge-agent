@@ -1,6 +1,7 @@
 """The LLM gateway: provider order, failover, time limits and call records."""
 
 import asyncio
+import json
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -118,6 +119,31 @@ async def test_provider_errors_are_logged_by_type_only(capsys: pytest.CaptureFix
     assert "12345678" not in output
 
 
+async def test_every_answered_call_is_logged_with_its_provider(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The logs alone show which model handled each call, without any prompt text."""
+    configure_logging("INFO", LogFormat.JSON)
+    claude = ScriptedChatModel(texts=["from claude", RuntimeError("overloaded")])
+    backup = ScriptedChatModel(texts=["from gemini"])
+    llm = gateway(claude, backup)
+
+    await llm.text([HumanMessage("secret question 12345678")], purpose="answer")
+    await llm.text(MESSAGES, purpose="supervisor")
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
+    calls = [line for line in lines if line.get("event") == "llm_call"]
+    assert [(c["provider"], c["purpose"], c["fallback"]) for c in calls] == [
+        ("anthropic", "answer", False),
+        ("gemini", "supervisor", True),
+    ]
+    assert calls[0]["model"] == "anthropic-test"
+    assert (calls[0]["input_tokens"], calls[0]["output_tokens"]) == (100, 20)
+    assert calls[0]["cached_input_tokens"] == 0
+    assert "duration_ms" in calls[0]
+    assert all("12345678" not in json.dumps(line) for line in lines)
+
+
 # ---------------------------------------------------------------
 # build_gateway: providers from the settings
 # ---------------------------------------------------------------
@@ -145,6 +171,19 @@ def test_providers_are_ordered_claude_then_gemini() -> None:
         ("anthropic", "claude-model"),
         ("gemini", "gemini-model"),
     ]
+
+
+def test_the_provider_order_comes_from_the_settings() -> None:
+    built = build_gateway(
+        _settings(
+            llm_providers="gemini,anthropic",
+            gemini_api_key=SecretStr("g-key"),
+            gemini_model="gemini-model",
+            anthropic_api_key=SecretStr("a-key"),
+            claude_model="claude-model",
+        )
+    )
+    assert [p.name for p in built.providers] == ["gemini", "anthropic"]
 
 
 def test_claude_is_set_up_to_spend_as_little_as_possible() -> None:

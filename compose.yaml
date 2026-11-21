@@ -88,6 +88,7 @@ services:
       ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-low}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
+      LLM_PROVIDERS: ${LLM_PROVIDERS:-anthropic,gemini}
       PINECONE_API_KEY: ${PINECONE_API_KEY:-}
       PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME:-helix-knowledge}
       # The BM25 parameters saved by `make ingest`, mounted read-only below.
