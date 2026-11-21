@@ -41,6 +41,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from agents.service import AgentRun, open_agent_service
+from agents.tracing import project_id
 from core.config import get_settings
 from core.logging import configure_logging
 from ingestion.chunker import split_sections
@@ -262,6 +263,7 @@ def send_to_langsmith(scores: list[Score]) -> int:
     client = Client(
         api_key=settings.langsmith_api_key.get_secret_value(), api_url=settings.langsmith_endpoint
     )
+    session_id = project_id(client, settings.langsmith_project)
     sent = 0
     for s in scores:
         values = {
@@ -272,7 +274,7 @@ def send_to_langsmith(scores: list[Score]) -> int:
         }
         for key, value in values.items():
             if value is not None:
-                client.create_feedback(run_id=s.run_id, key=key, score=value)
+                client.create_feedback(run_id=s.run_id, key=key, score=value, session_id=session_id)
                 sent += 1
     client.flush()
     return sent
