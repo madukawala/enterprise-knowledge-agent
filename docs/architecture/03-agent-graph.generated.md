@@ -40,7 +40,7 @@ graph TD;
 	validator -.-> memory;
 	validator -.-> response;
 	memory --> __end__;
-	classDef default fill:#f2f0ff,line-height:1.2
-	classDef first fill-opacity:0
-	classDef last fill:#bfb6fc
+	classDef default fill:#ede9fe,stroke:#6d28d9,stroke-width:1px,color:#1e1b4b,line-height:1.2
+	classDef first fill:#ddd6fe,stroke:#6d28d9,stroke-width:1px,color:#1e1b4b
+	classDef last fill:#c4b5fd,stroke:#6d28d9,stroke-width:1px,color:#1e1b4b
 ```
