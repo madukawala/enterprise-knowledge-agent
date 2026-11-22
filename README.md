@@ -391,6 +391,7 @@ The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 | [docs/security/THREAT_MODEL.md](docs/security/THREAT_MODEL.md) | Threats, the controls against them and the tests that prove them |
 | [docs/security/PROMPT_INJECTION.md](docs/security/PROMPT_INJECTION.md) | How prompt injection is defended against, layer by layer |
 | [docs/TESTING.md](docs/TESTING.md) | Testing strategy, test layers and CI checks |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: branches, pull requests into `develop`, and releases to `main` |
 | [docs/evals](docs/evals/README.md) | Evaluation results, starting with retrieval |
 
 ## Evidence for reviewers

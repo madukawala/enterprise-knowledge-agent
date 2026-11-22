@@ -1,0 +1,28 @@
+# Runs on every pull request into main.
+# Only the develop branch of this repository may be merged into main.
+# Pull requests from any other branch, or from a fork, fail this check.
+
+name: Branch policy
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  source-branch:
+    name: PRs to main must come from develop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the source branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REF" != "develop" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "::error::Only the develop branch of $THIS_REPO may be merged into main (got $HEAD_REPO:$HEAD_REF)."
+            exit 1
+          fi
+          echo "Source branch is $THIS_REPO:develop."
