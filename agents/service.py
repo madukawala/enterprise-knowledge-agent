@@ -49,7 +49,7 @@ from agents.streaming import STREAM_MODES, RunRecorder
 from agents.telemetry import AgentMetrics
 from agents.tools.enterprise import EnterpriseTools
 from agents.tools.sandbox import CodeRunner
-from agents.tracing import Tracing
+from agents.tracing import TracedSearcher, Tracing
 from core.config import Settings
 from core.errors import RetrievalError
 from core.logging import get_logger
@@ -439,7 +439,8 @@ async def open_agent_service(
         memory = LongTermMemory(store) if settings.memory_enabled else None
         context = NodeContext(
             gateway=gateway,
-            searcher=searcher,
+            # Each search is its own step in a trace, with its filter and results.
+            searcher=TracedSearcher(searcher),
             metrics=metrics,
             history_messages=settings.agent_history_messages,
             sandbox=sandbox,

@@ -16,7 +16,7 @@ from agents import cli, diagram
 from agents.llm import LLMGateway, LLMSetupError
 from agents.service import AgentService, UnavailableSearcher, open_agent_service
 from agents.state import AnswerKind
-from agents.tracing import Tracing
+from agents.tracing import SEARCH_RUN_NAME, TracedSearcher, Tracing
 from core.config import Settings
 from security.roles import Role
 from tests.helpers.agents import agent_service, decision, gateway, search_plan
@@ -223,6 +223,62 @@ async def test_traced_runs_carry_the_role_and_request_labels(
     assert metadata["role"] == "viewer"
     assert {"helix-agent", "role:viewer"} <= set(graph_run["tags"])  # type: ignore[arg-type]
     tracing.flush()
+
+
+async def test_each_search_is_a_retriever_step_with_the_access_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The search shows in the trace under the retrieval agent: the query,
+    the exact Pinecone filter (with the role's access levels) and the hits."""
+    settings = _settings(
+        tmp_path, langsmith_tracing=True, langsmith_api_key=SecretStr("lsv2_test-key")
+    )
+    tracing = Tracing(settings)
+    created: list[dict[str, object]] = []
+    updated: list[dict[str, object]] = []
+    monkeypatch.setattr(Client, "create_run", lambda self, **run: created.append(run))
+    monkeypatch.setattr(
+        Client, "update_run", lambda self, run_id, **run: updated.append({"id": run_id, **run})
+    )
+
+    from tests.helpers.agents import FakeSearcher, hit, result_with
+
+    searcher = TracedSearcher(FakeSearcher([result_with(hit("RB-1"))]))
+    agents = agent_service(_scripted("Renew it [1]."), searcher)
+    agents.tracing = tracing
+    await agents.ask("Why?", role=Role.VIEWER, request_id="req-1")
+    tracing.flush()
+
+    retrieval_step = next(r for r in created if r.get("name") == "retrieval")
+    search_step = next(r for r in created if r.get("name") == SEARCH_RUN_NAME)
+    assert search_step["run_type"] == "retriever"
+    assert search_step["parent_run_id"] == retrieval_step["id"]
+    inputs = search_step["inputs"]
+    assert inputs["query"] == "certificate expired"  # type: ignore[index]
+    assert inputs["role"] == "viewer"  # type: ignore[index]
+    assert inputs["filter"] == {"access_level": {"$in": ["internal", "public"]}}  # type: ignore[index]
+
+    (end,) = [u for u in updated if u["id"] == search_step["id"]]
+    (document,) = end["outputs"]["documents"]  # type: ignore[index]
+    assert document["metadata"]["doc_id"] == "RB-1"
+    assert document["metadata"]["access_level"] == "internal"
+
+
+async def test_searches_outside_a_trace_send_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No traced run around the search: no step is sent through a default client."""
+    created: list[dict[str, object]] = []
+    monkeypatch.setattr(Client, "create_run", lambda self, **run: created.append(run))
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+    from rag.retrieval import SearchRequest
+    from tests.helpers.agents import FakeSearcher, hit, result_with
+
+    result = await TracedSearcher(FakeSearcher([result_with(hit("RB-1"))])).search(
+        SearchRequest(query="q"), role=Role.VIEWER
+    )
+
+    assert [h.chunk.doc_id for h in result.hits] == ["RB-1"]
+    assert created == []
 
 
 def _feedback_recorder(
