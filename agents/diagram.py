@@ -13,6 +13,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from langchain_core.runnables.graph import NodeStyles
+
 from agents.graph import build_graph
 from agents.llm import LLMGateway
 from agents.nodes import NodeContext
@@ -32,6 +34,15 @@ Compare it with the design in [03-agent-graph.drawio.svg](03-agent-graph.drawio.
 
 """
 
+# LangGraph's default colours give light fills with no text colour, so in a
+# dark editor theme the text turns light too and disappears into the pill.
+# Setting the text colour and a border keeps it readable on light and dark.
+_NODE_STYLES = NodeStyles(
+    default="fill:#ede9fe,stroke:#6d28d9,stroke-width:1px,color:#1e1b4b,line-height:1.2",
+    first="fill:#ddd6fe,stroke:#6d28d9,stroke-width:1px,color:#1e1b4b",
+    last="fill:#c4b5fd,stroke:#6d28d9,stroke-width:1px,color:#1e1b4b",
+)
+
 
 def mermaid() -> str:
     # Drawing the graph never runs a node, so no model or index is needed.
@@ -40,7 +51,7 @@ def mermaid() -> str:
         searcher=UnavailableSearcher("not used for drawing"),
         metrics=AgentMetrics(),
     )
-    return build_graph(context).get_graph().draw_mermaid()
+    return build_graph(context).get_graph().draw_mermaid(node_colors=_NODE_STYLES)
 
 
 def render() -> str:
