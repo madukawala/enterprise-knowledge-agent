@@ -397,11 +397,11 @@ The full testing strategy is in [docs/TESTING.md](docs/TESTING.md).
 
 ### LangSmith traces
 
-These are public, read-only links to traces from the running stack, taken on 2026-11-21. They open without a LangSmith account. Each trace shows the full tree of agent steps, the searches with their filters and results, the model calls with tokens and timing, and any tool calls.
+These are public, read-only links to traces from the running stack, taken on 2026-11-21 (the document question on 2026-11-22). They open without a LangSmith account. Each trace shows the full tree of agent steps, the searches with their filters and results, the model calls with tokens and timing, and any tool calls.
 
 | Trace | Role | What to look at |
 |---|---|---|
-| [Document question](https://smith.langchain.com/public/32baa61c-8919-4fa6-8e87-ec4980f40601/r) | Viewer | Agent transitions, the search with the viewer's access filter, and the citations checked by the validator |
+| [Document question](https://smith.langchain.com/public/1ce44665-6872-4ae3-8cf3-cd1e3ee25da0/r) | Viewer | Agent transitions; the `pinecone_search` step under `retrieval`, with the query, the Pinecone filter including the viewer's `access_level` rule, and the chunks it returned; and the citations checked by the validator |
 | [Research paused for approval](https://smith.langchain.com/public/5844ef8b-fa90-40c3-a4a7-4ecedfc70411/r) | Analyst | The assignment's outage question stopping at the LangGraph `interrupt` before any research runs |
 | [Research resumed after approval](https://smith.langchain.com/public/a6d1f38f-3d34-4889-9012-d47c91270205/r) | Analyst | The same run resumed from the checkpoint: the collections explored, the Python search plan run in the sandbox, the batch sub-agents and the combined answer with recurring root causes |
 | [Blocked prompt injection](https://smith.langchain.com/public/45631916-6cbf-438c-8dfb-d09992f9bbdf/r) | Viewer | Refused by the input guard, with no model call and no search |

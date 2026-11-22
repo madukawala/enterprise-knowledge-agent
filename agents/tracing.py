@@ -23,22 +23,35 @@ client is given `mask_for_trace` for the inputs, outputs and metadata of
 every run, which passes every text through the masker (core/pii.py). The
 question, the retrieved text and the answer reach LangSmith with e-mail
 addresses, card numbers, phone numbers and secrets replaced by their kind.
+
+Every document search also gets a step of its own in the trace
+(`TracedSearcher`): a `retriever` run named `pinecone_search`, under the
+agent that searched. Its inputs are the query, the role, the collections
+and the exact Pinecone filter, including the `access_level` rule the role
+adds; its outputs are the chunks that came back. Without it, a trace would
+show the agent's search plan but never the permission filter.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tracers.langchain import LangChainTracer
 from langsmith import Client
+from langsmith.run_trees import RunTree
 from pydantic import BaseModel
 
 from core.config import Settings
 from core.logging import get_logger
 from core.pii import mask_text
+from rag.filters import build_filter
+from rag.retrieval import SearchHit, SearchRequest, SearchResult
+from security.roles import Role
 
 log = get_logger(__name__)
+
+SEARCH_RUN_NAME = "pinecone_search"
 
 
 def project_id(client: Client, project: str) -> str | None:
@@ -151,3 +164,105 @@ class Tracing:
             self._client.flush()
         except Exception as error:  # tracing must never break the app
             log.warning("langsmith_flush_failed", error_type=type(error).__name__)
+
+
+# ---------------------------------------------------------------
+# The search step in a trace
+# ---------------------------------------------------------------
+
+
+class _Searcher(Protocol):
+    async def search(self, request: SearchRequest, *, role: Role) -> SearchResult: ...
+
+
+class TracedSearcher:
+    """Wraps a searcher so each search is its own `retriever` step in the trace.
+
+    The step is a child of the agent step that searched, and is sent through
+    that trace's own client, so it is masked like every other step. When the
+    search is not part of a traced run (tracing off, a test, an evaluation),
+    nothing is sent: the step is never sent on its own through a default
+    client, which would skip the masking.
+
+    The filter shown is `build_filter(role, request.filters)`, the same call
+    `HybridRetriever.search` makes, so it is exactly what Pinecone receives.
+    A tracing problem is logged and never fails the search.
+    """
+
+    def __init__(self, searcher: _Searcher) -> None:
+        self._searcher = searcher
+
+    async def search(self, request: SearchRequest, *, role: Role) -> SearchResult:
+        run = _start_search_run(request, role)
+        try:
+            result = await self._searcher.search(request, role=role)
+        except BaseException as error:
+            _end_search_run(run, error=type(error).__name__)
+            raise
+        _end_search_run(run, outputs=search_outputs(result))
+        return result
+
+
+def search_inputs(request: SearchRequest, role: Role) -> dict[str, Any]:
+    """The inputs of the search step: what was asked, and the filter Pinecone gets."""
+    return {
+        "query": request.query,
+        "role": role.value,
+        "collections": [collection.value for collection in request.collections],
+        "filter": build_filter(role, request.filters),
+    }
+
+
+def search_outputs(result: SearchResult) -> dict[str, Any]:
+    """The outputs of the search step, in the document shape LangSmith shows for retrievers."""
+    return {"documents": [_document(hit) for hit in result.hits]}
+
+
+def _document(hit: SearchHit) -> dict[str, Any]:
+    chunk = hit.chunk
+    return {
+        "type": "Document",
+        "page_content": chunk.text,
+        "metadata": {
+            "record_id": hit.record_id,
+            "doc_id": chunk.doc_id,
+            "title": chunk.title,
+            "section": chunk.section,
+            "collection": hit.collection.value,
+            "access_level": chunk.access_level.value,
+            "department": chunk.department.value,
+            "document_type": chunk.document_type.value,
+            "created_date": chunk.created_date.isoformat(),
+            "score": hit.score,
+            "rerank_score": hit.rerank_score,
+        },
+    }
+
+
+def _start_search_run(request: SearchRequest, role: Role) -> RunTree | None:
+    try:
+        # The agent step running now, if this run is traced. It carries the
+        # trace's own client (the masked one) and project.
+        parent = RunTree.from_runnable_config(None)
+        if parent is None:
+            return None
+        run = parent.create_child(
+            name=SEARCH_RUN_NAME, run_type="retriever", inputs=search_inputs(request, role)
+        )
+        run.post()
+        return run
+    except Exception as error:  # tracing must never break the app
+        log.warning("search_trace_failed", error_type=type(error).__name__)
+        return None
+
+
+def _end_search_run(
+    run: RunTree | None, *, outputs: dict[str, Any] | None = None, error: str | None = None
+) -> None:
+    if run is None:
+        return
+    try:
+        run.end(outputs=outputs, error=error)
+        run.patch()
+    except Exception as failure:  # tracing must never break the app
+        log.warning("search_trace_failed", error_type=type(failure).__name__)
